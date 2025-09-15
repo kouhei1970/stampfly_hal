@@ -13,8 +13,6 @@ set(PROJECT_NAME stampfly_hal)
 # Extra component directories
 set(EXTRA_COMPONENT_DIRS
     components/stampfly_hal
-    components/stampfly_sensors  
-    components/stampfly_utils
 )
 
 # Include ESP-IDF build system

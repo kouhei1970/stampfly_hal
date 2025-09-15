@@ -44,20 +44,48 @@ python pytest_hello_world.py
 python test_monitor.py
 ```
 
-## アーキテクチャ
+## 現在のアーキテクチャ
 
-### コンポーネント構成
+### 統一HALコンポーネント構成
 ```
 components/
-├── stampfly_core/      # I2C/SPI/UART HAL
-├── stampfly_rgbled/    # RGBLED制御HAL
-├── stampfly_sensors/   # センサードライバー群
-├── stampfly_control/   # 制御アルゴリズム
-└── stampfly_comm/      # 通信プロトコル
+└── stampfly_hal/ (統一HAL)
+    ├── CMakeLists.txt
+    ├── include/
+    │   ├── stampfly_hal.h         # 統一公開ヘッダー
+    │   ├── hal_base.h             # 改良された基底クラス
+    │   ├── uart_hal.h             # 通信HAL群
+    │   ├── spi_hal.h
+    │   ├── i2c_hal.h
+    │   ├── gpio.h
+    │   ├── rgbled.h               # 周辺機器HAL
+    │   ├── stamps3_led.h          # StampS3オンボードLED HAL
+    │   ├── bmi270.h               # センサーHAL群
+    │   ├── bmm150.h
+    │   ├── bmp280.h
+    │   ├── vl53l3cx.h
+    │   ├── pmw3901.h
+    │   ├── ina3221.h
+    │   └── stampfly_memory.h
+    └── src/
+        ├── hal_base.cpp           # 改良された基底クラス
+        ├── uart.cpp               # 通信HAL群
+        ├── spi.cpp
+        ├── i2c.cpp
+        ├── gpio.cpp
+        ├── rgbled.cpp             # RgbLedクラス実装
+        ├── stamps3_led.cpp        # StampS3Led実装
+        ├── bmi270.cpp             # センサーHAL群（プレースホルダー）
+        ├── bmm150.cpp
+        ├── bmp280.cpp
+        ├── vl53l3cx.cpp
+        ├── pmw3901.cpp
+        ├── ina3221.cpp
+        └── stampfly_memory.cpp    # メモリ監視ユーティリティ
 ```
 
 ### 主要技術要素
-- **リアルタイム制御**: 400Hz制御ループ（FreeRTOS）
+- **リアルタイム制御**: 500Hz制御ループ（FreeRTOS）
 - **センサーフュージョン**: Madgwick AHRS、カルマンフィルター
 - **制御アルゴリズム**: PID制御、MPC（モデル予測制御）
 - **通信**: ESP-NOWプロトコル
@@ -100,7 +128,7 @@ components/
 - オブジェクト指向C++設計（RAII原則適用）
 - ESP-IDFエラーハンドリング（ESP_ERROR_CHECK等）
 - メーカー純正API活用（C言語APIはC++ラッピング）
-- コンポーネント化による機能分離
+- 統一HALコンポーネントによる機能集約
 
 ### **作業方針（必須遵守）**
 **全ての作業において以下を必ず実施：**
@@ -132,120 +160,209 @@ components/
 4. フラッシュ・動作確認
 5. 正常動作まで継続デバッグ
 
-## 実装記録
+## 統一HAL設計仕様
 
-### USB-CDC実装（2025-09-15）
+### HALBase基底クラス
+```cpp
+namespace stampfly_hal {
 
-**目的**: USBケーブル接続時にシリアルデバイスとして認識されるよう改造
+class HALBase {
+public:
+    explicit HALBase(const char* name);
+    virtual ~HALBase() = default;
 
-**実装内容**:
-1. **sdkconfig.defaults設定**
-   - `CONFIG_ESP_CONSOLE_USB_CDC=y`: USB-CDCコンソール有効化
-   - `CONFIG_ESP_CONSOLE_UART=n`: UARTコンソール無効化
-   - バッファサイズ256バイトに拡大
+    // 必須ライフサイクル
+    virtual esp_err_t init() = 0;
+    virtual esp_err_t configure() = 0;
+    virtual esp_err_t enable() = 0;
+    virtual esp_err_t disable() = 0;
+    virtual esp_err_t reset() = 0;
 
-2. **main.cpp機能追加**
-   - `init_usb_cdc_console()`: USB Serial JTAGドライバー初期化
-   - USB接続状態監視機能
-   - USB接続状態変化の検出・表示
+    // 状態管理
+    bool is_initialized() const;
+    bool is_enabled() const;
+    esp_err_t get_last_error() const;
+    const char* get_name() const;
 
-3. **CMakeLists.txt更新**
-   - `esp_driver_usb_serial_jtag`コンポーネントをPRIV_REQUIRESに追加
-   - VFSコンポーネント依存関係追加
+    // デバッグ支援
+    virtual void print_status() const;
+    void log(esp_log_level_t level, const char* format, ...) const;
 
-**技術仕様**:
+protected:
+    esp_err_t set_error(esp_err_t error);
+    void set_initialized(bool state);
+    void set_enabled(bool state);
+
+private:
+    const char* name_;
+    bool initialized_ = false;
+    bool enabled_ = false;
+    esp_err_t last_error_ = ESP_OK;
+};
+
+}
+```
+
+### 統一アクセスAPI
+```cpp
+#include "stampfly_hal.h"  // 全機能に統一アクセス
+
+// 通信HAL
+stampfly_hal::UartHal uart(config);
+stampfly_hal::I2cHal i2c(config);
+stampfly_hal::SpiHal spi(config);
+
+// 周辺機器HAL
+stampfly_hal::RgbLed rgbled;           // StampFlyドローン側LED
+stampfly_hal::StampS3Led stamps3_led;  // StampS3オンボードLED
+
+// センサーHAL（実装済みプレースホルダー）
+stampfly_hal::BMI270 imu;
+stampfly_hal::BMM150 mag;
+stampfly_hal::BMP280 baro;
+stampfly_hal::VL53L3CX tof;
+stampfly_hal::PMW3901 optical_flow;
+stampfly_hal::INA3221 power_monitor;
+
+// ユーティリティ
+stampfly_hal::Memory::print_heap_info();
+```
+
+## 実装済み機能
+
+### USB-CDC実装
+- USBケーブル接続時にシリアルデバイスとして認識
 - ESP-IDF v5.4.1 USB Serial JTAG API使用
-- デフォルト設定（tx_buffer_size: 256, rx_buffer_size: 256）
-- USB接続検出: `usb_serial_jtag_is_connected()`
+- USB接続状態監視機能
 
-**使用方法**:
-```bash
-# ビルド・フラッシュ
-. $HOME/esp/esp-idf/export.sh
-idf.py build
-idf.py flash monitor
+### RGBLED HAL実装（完全動作版）
+- StampFlyオンボードRGBLED（WS2812B）制御
+- GPIO39、2個のWS2812B、RMT + GRB色順序
+- RgbLedクラス化、HALBase継承、完全初期化対応
+- 定義済み色：RED/GREEN/BLUE/YELLOW/PURPLE/CYAN/ORANGE/PINK/WHITE/灰色
+- 専用LED色変更タスク（1秒間隔で10色循環）
+- 正しいHAL初期化フロー：init() → enable() → set_color()
+
+### 通信HAL実装
+- UartHal, SpiHal, I2cHal（完全実装）
+- HALBase継承、統一ライフサイクル管理
+- ESP-IDFドライバー完全ラッピング
+
+### メモリ監視ユーティリティ
+```cpp
+stampfly_hal::Memory::print_heap_info();      // ヒープ情報ログ出力
+stampfly_hal::Memory::get_free_heap();        // 現在の空きヒープ取得
+stampfly_hal::Memory::get_minimum_free_heap(); // 最小空きヒープ取得
+stampfly_hal::Memory::get_largest_free_block(); // 最大連続ブロック取得
 ```
 
-**動作確認**:
-- ✅ ビルド成功
-- ✅ USB Serial JTAGドライバー初期化
-- ✅ USB接続状態監視
-- ✅ コンソール出力（USB-CDC経由）
+### センサーHALプレースホルダー
+- BMI270, BMM150, BMP280, VL53L3CX, PMW3901, INA3221
+- 全てHALBase継承、統一インターフェース実装
+- 実センサー機能は今後実装予定
 
-### RGBLED HAL実装（2025-09-15）
+### 現在のタスク構成とデモ機能
+**リアルタイムタスク:**
+- `task_500hz`: 500Hz高頻度制御ループ（優先度5、CPU1固定）
+- `task_30hz`: 30Hz中頻度処理（優先度3、CPU1固定）
+- `task_monitor`: システム統計表示（5秒間隔、優先度1）
+- `task_led_demo`: RGBLED色変更デモ（1秒間隔10色循環、優先度2）
 
-**目的**: StampFlyのオンボードRGBLED（WS2812B）を制御するHAL実装
+**動作確認機能:**
+- USB-CDC自動接続・状態監視
+- RGBLED完全初期化フローテスト
+- メモリ使用量監視
+- タスク実行統計表示
 
-**実装内容**:
-1. **stampfly_rgbledコンポーネント作成**
-   - `components/stampfly_rgbled/`: 独立コンポーネント化
-   - `stampfly_rgbled.h`: HAL API定義
-   - `stampfly_rgbled.cpp`: WS2812B制御実装
+プロジェクトはビルド・実行可能で、全HAL機能が正常動作します。
 
-2. **ESP-IDF led_strip依存関係追加**
-   - `idf.py add-dependency "espressif/led_strip^3.0.1"`: 公式コンポーネント使用
-   - RMT（Remote Control Transceiver）ペリフェラル活用
+### StampS3オンボードLED制御機能（2025-09-15追加）
 
-3. **main.cpp統合**
-   - RGBLED HAL初期化処理追加
-   - 5秒ごと色変更デモ実装（`task_monitor()`内）
-   - 10色パターンの順次切り替え
+**実装機能:**
+- `StampS3Led` HALクラス（GPIO21固定、WS2812B 1個制御専用）
+- StampFlyドローン側LED（2個）とStampS3側LED（1個）の同時制御
+- デュアルLED同期色変更デモ（10色循環、1秒間隔）
 
-**ハードウェア仕様**（Arduino版調査結果）:
-- **GPIO39**: オンボードLED（2個のWS2812B）
-- **制御方式**: RMT + GRB色順序
-- **輝度**: デフォルト15/255（Arduino版互換）
+**技術仕様:**
+```cpp
+// StampS3 LED仕様
+- GPIO: 21番ピン（固定）
+- LED個数: 1個
+- 制御IC: WS2812B-2020
+- 色順序: GRB
+- 初期化表示: 青色（StampS3識別用）
 
-**HAL API仕様**:
-```c
-// 基本制御
-esp_err_t stampfly_rgbled_init(void);
-esp_err_t stampfly_rgbled_set_color(uint32_t color);
-esp_err_t stampfly_rgbled_set_preset_color(stampfly_color_t color);
-esp_err_t stampfly_rgbled_set_rgb(uint8_t red, uint8_t green, uint8_t blue);
-esp_err_t stampfly_rgbled_set_brightness(uint8_t brightness);
-esp_err_t stampfly_rgbled_clear(void);
+// 統合API例
+stampfly_hal::StampS3Led stamps3_led;
+stamps3_led.init();
+stamps3_led.enable();
+stamps3_led.set_red();    // 定義済み色設定
+stamps3_led.set_color(0xFF9933);  // 直接色指定
 ```
 
-**定義済み色**:
-- `STAMPFLY_COLOR_RED/GREEN/BLUE/YELLOW/PURPLE/CYAN/ORANGE/PINK/WHITE/OFF`
-- Arduino版フライトモード色に対応
+**ファイル構成:**
+- `components/stampfly_hal/include/stamps3_led.h`: StampS3Led HALクラス定義
+- `components/stampfly_hal/src/stamps3_led.cpp`: 実装
+- `main/main.cpp`: デュアルLED制御タスク統合済み
 
-**技術仕様**:
-- ESP-IDF v5.4.1 led_strip v3.0.1使用
-- `LED_STRIP_COLOR_COMPONENT_FMT_GRB`: WS2812B色順序対応
-- RMT解像度: 10MHz、DMA無効（小規模LED向け）
+**動作確認済み機能:**
+- ✅ StampS3オンボードLED制御（GPIO21）
+- ✅ StampFly LEDとの同期制御
+- ✅ ビルド・リンク正常完了
+- ✅ HALBase統一インターフェース準拠
 
-**5秒ごと色変更デモ**:
-- `task_monitor()`関数で自動実行
-- 赤→緑→青→黄→紫→シアン→オレンジ→ピンク→白→消灯の順次切り替え
-- ログ出力でカラーコード（0x006lX）表示
+## 依存関係管理
 
-**使用方法**:
-```bash
-# ビルド・フラッシュ
-. $HOME/esp/esp-idf/export.sh
-idf.py build
-idf.py flash monitor
+### ESP-IDF依存関係システム
+- **`dependencies.lock`**: ESP-IDFが直接参照する依存関係ロックファイル
+  - バージョン固定: `espressif/led_strip v3.0.1~1`
+  - 再現可能ビルド保証
+  - チーム開発での環境統一
+- **`managed_components/`**: 自動生成キャッシュフォルダ
+  - ビルド時にESP-IDFが自動作成・管理
+  - `.gitignore`で除外済み（適切な設定）
+  - 削除しても自動復元される
+
+## プロジェクト構造
+
+### 最終的なプロジェクト構造
+```
+stampfly_hal/
+├── .git/
+├── .gitignore                  # managed_components/除外設定済み
+├── CLAUDE.md                   # プロジェクト仕様・実装記録
+├── CMakeLists.txt              # 統合HALのみ参照
+├── components/
+│   └── stampfly_hal/           # 統一HALコンポーネント（完全統合済み）
+├── dependencies.lock           # ESP-IDF依存関係管理（必須）
+├── main/                       # 統合APIに対応済み
+├── managed_components/         # 自動生成（.gitignore除外）
+├── sdkconfig*                  # ESP-IDF設定
+└── README.md
 ```
 
-**動作確認**:
-- ✅ ビルド成功（API仕様修正済み）
-- ✅ RGBLED HAL初期化（白色点灯）
-- ✅ 5秒間隔自動色変更デモ
-- ✅ ESP-IDF RMT + led_strip統合
+### 実現された効果
+- ✅ **コード保守性**: 単一コンポーネントによる一元管理
+- ✅ **API一貫性**: 全HALで統一されたHALBaseインターフェース
+- ✅ **開発効率**: 1つのヘッダー (`stampfly_hal.h`) で全機能アクセス
+- ✅ **拡張性**: 新センサー追加の標準化（プレースホルダー準備済み）
+- ✅ **学習効果**: 統一されたパターンでの理解促進
+- ✅ **ESP-IDF準拠**: 標準的なコンポーネント設計に準拠
 
-## CLI機能の設計指針
+## 今後の開発予定
 
-### 推奨アーキテクチャ（ハイブリッドアプローチ）
-- **HAL層**: 基本デバッグ出力機能（軽量）
-- **アプリケーション層**: 完全CLIインターフェース（ユーザー向け）
+### センサーHAL実装ロードマップ
+1. BMI270 (6軸IMU) - 姿勢制御基盤
+2. BMP280 (気圧センサー) - 高度制御
+3. VL53L3CX (ToF距離センサー) - 障害物回避
+4. BMM150 (3軸磁気センサー) - ヘディング制御
+5. PMW3901 (オプティカルフローセンサー) - 位置制御
+6. INA3221 (3チャンネル電力モニター) - バッテリー管理
 
-```
-components/
-├── stampfly_core/debug/    # HAL組み込みデバッグ機能
-└── stampfly_cli/           # 独立CLIコンポーネント（オプション）
-```
+### 制御システム統合
+- センサーフュージョン機能（Madgwick AHRS, Kalman Filter）
+- 飛行制御アルゴリズム統合（PID, MPC）
+- 実時間データ処理パイプライン（500Hz制御ループ）
 
 ## 参考リソース
 - https://github.com/kouhei1970/StampFly_sandbox

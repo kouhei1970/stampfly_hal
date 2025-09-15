@@ -8,7 +8,7 @@
 
 #pragma once
 
-#include "stampfly_hal_base.h"
+#include "hal_base.h"
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
 
@@ -67,6 +67,9 @@ public:
      * @return esp_err_t 設定結果
      */
     esp_err_t configure() override;
+    esp_err_t enable() override { set_enabled(true); return ESP_OK; }
+    esp_err_t disable() override { set_enabled(false); return ESP_OK; }
+    esp_err_t reset() override;
 
     /**
      * @brief デバイス追加

@@ -8,7 +8,7 @@
 
 #pragma once
 
-#include "stampfly_hal_base.h"
+#include "hal_base.h"
 #include "driver/uart.h"
 #include "driver/gpio.h"
 
@@ -60,6 +60,24 @@ public:
      * @return esp_err_t 設定結果
      */
     esp_err_t configure() override;
+
+    /**
+     * @brief 有効化
+     * @return esp_err_t 有効化結果
+     */
+    esp_err_t enable() override { set_enabled(true); return ESP_OK; }
+
+    /**
+     * @brief 無効化
+     * @return esp_err_t 無効化結果
+     */
+    esp_err_t disable() override { set_enabled(false); return ESP_OK; }
+
+    /**
+     * @brief リセット
+     * @return esp_err_t リセット結果
+     */
+    esp_err_t reset() override;
 
     /**
      * @brief printf出力を本UARTにリダイレクト

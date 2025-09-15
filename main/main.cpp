@@ -20,10 +20,7 @@
 #include "driver/usb_serial_jtag.h"
 
 // StampFly HAL includes
-#include "uart_hal.h"
-#include "spi_hal.h"
-#include "i2c_hal.h"
-#include "stampfly_rgbled.h"
+#include "stampfly_hal.h"
 
 static const char* TAG = "STAMPFLY_HAL";
 
@@ -256,24 +253,123 @@ void task_30hz(void *pvParameters)
     }
 }
 
+// LED色変更専用タスク（StampFly + StampS3 両方対応）
+void task_led_demo(void *pvParameters)
+{
+    static const char* TAG_LED = "LED_DEMO";
+
+    // StampFly RGBLED HALインスタンス（staticで保持）
+    static stampfly_hal::RgbLed* rgbled_ptr = nullptr;
+    if (!rgbled_ptr) {
+        rgbled_ptr = new stampfly_hal::RgbLed();
+        esp_err_t led_ret = rgbled_ptr->init();
+        if (led_ret == ESP_OK) {
+            led_ret = rgbled_ptr->enable();
+            if (led_ret == ESP_OK) {
+                ESP_LOGI(TAG_LED, "StampFly RGBLED initialized and enabled successfully");
+                // 初期化成功を示すために白で点灯（1秒間）
+                rgbled_ptr->set_color(stampfly_hal::Color::WHITE);
+                vTaskDelay(pdMS_TO_TICKS(1000));
+            } else {
+                ESP_LOGE(TAG_LED, "StampFly RGBLED enable failed: %s", esp_err_to_name(led_ret));
+                delete rgbled_ptr;
+                rgbled_ptr = nullptr;
+            }
+        } else {
+            ESP_LOGW(TAG_LED, "StampFly RGBLED initialization failed: %s", esp_err_to_name(led_ret));
+            delete rgbled_ptr;
+            rgbled_ptr = nullptr;
+        }
+    }
+
+    // StampS3 LED HALインスタンス（staticで保持）
+    static stampfly_hal::StampS3Led* stamps3_led_ptr = nullptr;
+    if (!stamps3_led_ptr) {
+        stamps3_led_ptr = new stampfly_hal::StampS3Led();
+        esp_err_t s3_led_ret = stamps3_led_ptr->init();
+        if (s3_led_ret == ESP_OK) {
+            s3_led_ret = stamps3_led_ptr->enable();
+            if (s3_led_ret == ESP_OK) {
+                ESP_LOGI(TAG_LED, "StampS3 LED initialized and enabled successfully");
+                // 初期化成功を示すために青で点灯（1秒間）
+                stamps3_led_ptr->set_blue();
+                vTaskDelay(pdMS_TO_TICKS(1000));
+            } else {
+                ESP_LOGE(TAG_LED, "StampS3 LED enable failed: %s", esp_err_to_name(s3_led_ret));
+                delete stamps3_led_ptr;
+                stamps3_led_ptr = nullptr;
+            }
+        } else {
+            ESP_LOGW(TAG_LED, "StampS3 LED initialization failed: %s", esp_err_to_name(s3_led_ret));
+            delete stamps3_led_ptr;
+            stamps3_led_ptr = nullptr;
+        }
+    }
+
+    // RGBLED色のデモ配列（1秒ごとに切り替え）
+    static const stampfly_hal::Color demo_colors[] = {
+        stampfly_hal::Color::RED,     // 赤
+        stampfly_hal::Color::GREEN,   // 緑
+        stampfly_hal::Color::BLUE,    // 青
+        stampfly_hal::Color::YELLOW,  // 黄
+        stampfly_hal::Color::PURPLE,  // 紫
+        stampfly_hal::Color::CYAN,    // シアン
+        stampfly_hal::Color::ORANGE,  // オレンジ
+        stampfly_hal::Color::PINK,    // ピンク
+        stampfly_hal::Color::WHITE,   // 白
+        static_cast<stampfly_hal::Color>(0x202020) // 暗い白（灰色）
+    };
+    static const size_t num_colors = sizeof(demo_colors) / sizeof(demo_colors[0]);
+
+    // StampS3専用色設定関数配列
+    typedef esp_err_t (stampfly_hal::StampS3Led::*ColorSetMethod)();
+    static const ColorSetMethod s3_color_methods[] = {
+        &stampfly_hal::StampS3Led::set_red,
+        &stampfly_hal::StampS3Led::set_green,
+        &stampfly_hal::StampS3Led::set_blue,
+        &stampfly_hal::StampS3Led::set_yellow,
+        &stampfly_hal::StampS3Led::set_purple,
+        &stampfly_hal::StampS3Led::set_cyan,
+        &stampfly_hal::StampS3Led::set_orange,
+        &stampfly_hal::StampS3Led::set_pink,
+        &stampfly_hal::StampS3Led::set_white,
+        &stampfly_hal::StampS3Led::set_white  // 灰色の代わりに白
+    };
+
+    uint32_t color_index = 0;
+
+    while (1) {
+        // StampFly RGBLED制御
+        if (rgbled_ptr) {
+            stampfly_hal::Color current_color = demo_colors[color_index % num_colors];
+            esp_err_t led_ret = rgbled_ptr->set_color(current_color);
+            if (led_ret == ESP_OK) {
+                ESP_LOGI(TAG_LED, "StampFly LED: Color changed to 0x%06lX", static_cast<unsigned long>(current_color));
+            } else {
+                ESP_LOGW(TAG_LED, "StampFly LED: Failed to change color: %s", esp_err_to_name(led_ret));
+            }
+        }
+
+        // StampS3 LED制御
+        if (stamps3_led_ptr) {
+            ColorSetMethod method = s3_color_methods[color_index % num_colors];
+            esp_err_t s3_led_ret = (stamps3_led_ptr->*method)();
+            if (s3_led_ret == ESP_OK) {
+                ESP_LOGI(TAG_LED, "StampS3 LED: Color changed (method %lu)", static_cast<unsigned long>(color_index % num_colors));
+            } else {
+                ESP_LOGW(TAG_LED, "StampS3 LED: Failed to change color: %s", esp_err_to_name(s3_led_ret));
+            }
+        }
+
+        color_index++;
+        vTaskDelay(pdMS_TO_TICKS(1000));  // 1秒間隔で色変更
+    }
+}
+
 // 統計情報を表示するタスク（オプション）
 void task_monitor(void *pvParameters)
 {
     static uint32_t counter = 0;
-    // RGBLED色のデモ配列（5秒ごとに切り替え）
-    static const stampfly_color_t demo_colors[] = {
-        STAMPFLY_COLOR_RED,     // 赤
-        STAMPFLY_COLOR_GREEN,   // 緑
-        STAMPFLY_COLOR_BLUE,    // 青
-        STAMPFLY_COLOR_YELLOW,  // 黄
-        STAMPFLY_COLOR_PURPLE,  // 紫
-        STAMPFLY_COLOR_CYAN,    // シアン
-        STAMPFLY_COLOR_ORANGE,  // オレンジ
-        STAMPFLY_COLOR_PINK,    // ピンク
-        STAMPFLY_COLOR_WHITE,   // 白
-        STAMPFLY_COLOR_OFF      // 消灯
-    };
-    static const size_t num_colors = sizeof(demo_colors) / sizeof(demo_colors[0]);
 
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(5000));  // 5秒ごとに表示
@@ -285,16 +381,6 @@ void task_monitor(void *pvParameters)
         ESP_LOGI(TAGP, "30Hz Task: %lu sec",
                  (task_30hz_count/150)*5);
         ESP_LOGI(TAGP, "Free Heap: %lu bytes", esp_get_free_heap_size());
-
-        // RGBLED色変更デモ
-        stampfly_color_t current_color = demo_colors[(counter - 1) % num_colors];
-        esp_err_t led_ret = stampfly_rgbled_set_preset_color(current_color);
-        if (led_ret == ESP_OK) {
-            ESP_LOGI(TAGP, "RGBLED Demo: Color changed to 0x%06lX", (unsigned long)current_color);
-        } else {
-            ESP_LOGW(TAGP, "RGBLED Demo: Failed to change color (not initialized?)");
-        }
-
         ESP_LOGI(TAGP, "======================");
     }
 }
@@ -310,15 +396,7 @@ extern "C" void app_main(void)
     // HAL初期化
     ESP_ERROR_CHECK(stampfly_hal_init());
 
-    // RGBLED HAL初期化
-    esp_err_t led_ret = stampfly_rgbled_init();
-    if (led_ret == ESP_OK) {
-        ESP_LOGI(TAG, "RGBLED HAL initialized successfully");
-        // 初期化成功を示すために白で点灯
-        stampfly_rgbled_set_preset_color(STAMPFLY_COLOR_WHITE);
-    } else {
-        ESP_LOGW(TAG, "RGBLED HAL initialization failed: %s", esp_err_to_name(led_ret));
-    }
+    // RGBLED HAL初期化は task_led_demo内で実行されるため、ここでは削除
 
     #if 1
     //RTOS タスクの作成例
@@ -355,7 +433,17 @@ extern "C" void app_main(void)
         1,                    // 優先度（低い）
         NULL                  // タスクハンドル
     );
-    
+
+    // LEDデモタスクを作成（低優先度）
+    xTaskCreate(
+        task_led_demo,        // タスク関数
+        "task_led_demo",      // タスク名
+        3072,                 // スタックサイズ（RGBLEDドライバー用に少し大きめ）
+        NULL,                 // パラメータ
+        2,                    // 優先度（モニターより少し高い）
+        NULL                  // タスクハンドル
+    );
+
     ESP_LOGI(TAG, "All tasks created successfully");
 
     #else

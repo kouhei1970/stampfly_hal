@@ -11,6 +11,8 @@
 #include "driver/uart_vfs.h"
 #include <cstdarg>
 #include <cstring>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 namespace stampfly_hal {
 
@@ -21,14 +23,14 @@ UartHal::UartHal(const UARTConfig& config)
 
 UartHal::~UartHal() 
 {
-    if (initialized_) {
+    if (is_initialized()) {
         uart_driver_delete(config_.port);
     }
 }
 
 esp_err_t UartHal::init() 
 {
-    if (initialized_) {
+    if (is_initialized()) {
         log(ESP_LOG_WARN, "Already initialized");
         return ESP_OK;
     }
@@ -55,7 +57,7 @@ esp_err_t UartHal::init()
 
 esp_err_t UartHal::configure() 
 {
-    if (!initialized_) {
+    if (!is_initialized()) {
         return set_error(ESP_ERR_INVALID_STATE);
     }
 
@@ -93,7 +95,7 @@ esp_err_t UartHal::configure()
 
 esp_err_t UartHal::redirect_printf() 
 {
-    if (!initialized_) {
+    if (!is_initialized()) {
         return set_error(ESP_ERR_INVALID_STATE);
     }
 
@@ -112,7 +114,7 @@ esp_err_t UartHal::redirect_printf()
 
 int UartHal::write(const char* data, size_t length, uint32_t timeout_ms) 
 {
-    if (!initialized_ || !enabled_) {
+    if (!is_initialized() || !is_enabled()) {
         return -1;
     }
 
@@ -133,7 +135,7 @@ int UartHal::write(const char* data, size_t length, uint32_t timeout_ms)
 
 int UartHal::read(char* buffer, size_t length, uint32_t timeout_ms) 
 {
-    if (!initialized_ || !enabled_) {
+    if (!is_initialized() || !is_enabled()) {
         return -1;
     }
 
@@ -157,7 +159,7 @@ int UartHal::write_string(const char* str, uint32_t timeout_ms)
 
 int UartHal::printf(const char* format, ...) 
 {
-    if (!initialized_ || !enabled_) {
+    if (!is_initialized() || !is_enabled()) {
         return -1;
     }
 
@@ -181,7 +183,7 @@ int UartHal::printf(const char* format, ...)
 
 size_t UartHal::available() 
 {
-    if (!initialized_) {
+    if (!is_initialized()) {
         return 0;
     }
 
@@ -195,9 +197,21 @@ size_t UartHal::available()
     return bytes_available;
 }
 
+esp_err_t UartHal::reset()
+{
+    if (is_initialized()) {
+        uart_driver_delete(config_.port);
+        set_initialized(false);
+        set_enabled(false);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        return init();
+    }
+    return ESP_OK;
+}
+
 esp_err_t UartHal::flush() 
 {
-    if (!initialized_) {
+    if (!is_initialized()) {
         return set_error(ESP_ERR_INVALID_STATE);
     }
 

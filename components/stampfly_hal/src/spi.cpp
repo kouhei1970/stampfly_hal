@@ -8,6 +8,8 @@
 
 #include "spi_hal.h"
 #include <cstring>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 namespace stampfly_hal {
 
@@ -25,7 +27,7 @@ SpiHal::~SpiHal()
 
 esp_err_t SpiHal::init() 
 {
-    if (initialized_) {
+    if (is_initialized()) {
         log(ESP_LOG_WARN, "Already initialized");
         return ESP_OK;
     }
@@ -50,9 +52,22 @@ esp_err_t SpiHal::init()
     return ESP_OK;
 }
 
+esp_err_t SpiHal::reset()
+{
+    if (bus_initialized_) {
+        spi_bus_free(config_.host);
+        bus_initialized_ = false;
+        set_initialized(false);
+        set_enabled(false);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        return init();
+    }
+    return ESP_OK;
+}
+
 esp_err_t SpiHal::configure() 
 {
-    if (!initialized_) {
+    if (!is_initialized()) {
         return set_error(ESP_ERR_INVALID_STATE);
     }
 
@@ -62,7 +77,7 @@ esp_err_t SpiHal::configure()
 
 esp_err_t SpiHal::add_device(const SPIDeviceConfig& device_config, spi_device_handle_t* device_handle) 
 {
-    if (!initialized_ || !enabled_) {
+    if (!is_initialized() || !is_enabled()) {
         return set_error(ESP_ERR_INVALID_STATE);
     }
 
@@ -118,7 +133,7 @@ esp_err_t SpiHal::remove_device(spi_device_handle_t device_handle)
 
 esp_err_t SpiHal::transmit(spi_device_handle_t device_handle, spi_transaction_t* transaction) 
 {
-    if (!initialized_ || !enabled_) {
+    if (!is_initialized() || !is_enabled()) {
         return set_error(ESP_ERR_INVALID_STATE);
     }
 

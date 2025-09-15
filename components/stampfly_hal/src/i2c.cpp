@@ -8,6 +8,8 @@
 
 #include "i2c_hal.h"
 #include <cstring>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 namespace stampfly_hal {
 
@@ -36,7 +38,7 @@ I2cHal::~I2cHal()
 
 esp_err_t I2cHal::init() 
 {
-    if (initialized_) {
+    if (is_initialized()) {
         log(ESP_LOG_WARN, "Already initialized");
         return ESP_OK;
     }
@@ -61,9 +63,23 @@ esp_err_t I2cHal::init()
     return ESP_OK;
 }
 
+esp_err_t I2cHal::reset()
+{
+    if (bus_initialized_ && bus_handle_) {
+        i2c_del_master_bus(bus_handle_);
+        bus_handle_ = nullptr;
+        bus_initialized_ = false;
+        set_initialized(false);
+        set_enabled(false);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        return init();
+    }
+    return ESP_OK;
+}
+
 esp_err_t I2cHal::configure() 
 {
-    if (!initialized_) {
+    if (!is_initialized()) {
         return set_error(ESP_ERR_INVALID_STATE);
     }
 
@@ -73,7 +89,7 @@ esp_err_t I2cHal::configure()
 
 int I2cHal::scan_devices(uint8_t* found_devices, size_t max_devices) 
 {
-    if (!initialized_ || !enabled_) {
+    if (!is_initialized() || !is_enabled()) {
         return -1;
     }
 
@@ -100,7 +116,7 @@ int I2cHal::scan_devices(uint8_t* found_devices, size_t max_devices)
 
 bool I2cHal::is_device_present(uint8_t device_addr) 
 {
-    if (!initialized_ || !enabled_) {
+    if (!is_initialized() || !is_enabled()) {
         return false;
     }
 
@@ -281,7 +297,7 @@ esp_err_t I2cHal::device_communicate(uint8_t device_addr,
                                     uint8_t* read_data, size_t read_len, 
                                     uint32_t timeout_ms) 
 {
-    if (!initialized_ || !enabled_ || !bus_handle_) {
+    if (!is_initialized() || !is_enabled() || !bus_handle_) {
         return set_error(ESP_ERR_INVALID_STATE);
     }
 
