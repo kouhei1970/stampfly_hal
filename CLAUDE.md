@@ -50,6 +50,7 @@ python test_monitor.py
 ```
 components/
 ├── stampfly_core/      # I2C/SPI/UART HAL
+├── stampfly_rgbled/    # RGBLED制御HAL
 ├── stampfly_sensors/   # センサードライバー群
 ├── stampfly_control/   # 制御アルゴリズム
 └── stampfly_comm/      # 通信プロトコル
@@ -130,6 +131,109 @@ components/
 3. ビルド成功確認
 4. フラッシュ・動作確認
 5. 正常動作まで継続デバッグ
+
+## 実装記録
+
+### USB-CDC実装（2025-09-15）
+
+**目的**: USBケーブル接続時にシリアルデバイスとして認識されるよう改造
+
+**実装内容**:
+1. **sdkconfig.defaults設定**
+   - `CONFIG_ESP_CONSOLE_USB_CDC=y`: USB-CDCコンソール有効化
+   - `CONFIG_ESP_CONSOLE_UART=n`: UARTコンソール無効化
+   - バッファサイズ256バイトに拡大
+
+2. **main.cpp機能追加**
+   - `init_usb_cdc_console()`: USB Serial JTAGドライバー初期化
+   - USB接続状態監視機能
+   - USB接続状態変化の検出・表示
+
+3. **CMakeLists.txt更新**
+   - `esp_driver_usb_serial_jtag`コンポーネントをPRIV_REQUIRESに追加
+   - VFSコンポーネント依存関係追加
+
+**技術仕様**:
+- ESP-IDF v5.4.1 USB Serial JTAG API使用
+- デフォルト設定（tx_buffer_size: 256, rx_buffer_size: 256）
+- USB接続検出: `usb_serial_jtag_is_connected()`
+
+**使用方法**:
+```bash
+# ビルド・フラッシュ
+. $HOME/esp/esp-idf/export.sh
+idf.py build
+idf.py flash monitor
+```
+
+**動作確認**:
+- ✅ ビルド成功
+- ✅ USB Serial JTAGドライバー初期化
+- ✅ USB接続状態監視
+- ✅ コンソール出力（USB-CDC経由）
+
+### RGBLED HAL実装（2025-09-15）
+
+**目的**: StampFlyのオンボードRGBLED（WS2812B）を制御するHAL実装
+
+**実装内容**:
+1. **stampfly_rgbledコンポーネント作成**
+   - `components/stampfly_rgbled/`: 独立コンポーネント化
+   - `stampfly_rgbled.h`: HAL API定義
+   - `stampfly_rgbled.cpp`: WS2812B制御実装
+
+2. **ESP-IDF led_strip依存関係追加**
+   - `idf.py add-dependency "espressif/led_strip^3.0.1"`: 公式コンポーネント使用
+   - RMT（Remote Control Transceiver）ペリフェラル活用
+
+3. **main.cpp統合**
+   - RGBLED HAL初期化処理追加
+   - 5秒ごと色変更デモ実装（`task_monitor()`内）
+   - 10色パターンの順次切り替え
+
+**ハードウェア仕様**（Arduino版調査結果）:
+- **GPIO39**: オンボードLED（2個のWS2812B）
+- **制御方式**: RMT + GRB色順序
+- **輝度**: デフォルト15/255（Arduino版互換）
+
+**HAL API仕様**:
+```c
+// 基本制御
+esp_err_t stampfly_rgbled_init(void);
+esp_err_t stampfly_rgbled_set_color(uint32_t color);
+esp_err_t stampfly_rgbled_set_preset_color(stampfly_color_t color);
+esp_err_t stampfly_rgbled_set_rgb(uint8_t red, uint8_t green, uint8_t blue);
+esp_err_t stampfly_rgbled_set_brightness(uint8_t brightness);
+esp_err_t stampfly_rgbled_clear(void);
+```
+
+**定義済み色**:
+- `STAMPFLY_COLOR_RED/GREEN/BLUE/YELLOW/PURPLE/CYAN/ORANGE/PINK/WHITE/OFF`
+- Arduino版フライトモード色に対応
+
+**技術仕様**:
+- ESP-IDF v5.4.1 led_strip v3.0.1使用
+- `LED_STRIP_COLOR_COMPONENT_FMT_GRB`: WS2812B色順序対応
+- RMT解像度: 10MHz、DMA無効（小規模LED向け）
+
+**5秒ごと色変更デモ**:
+- `task_monitor()`関数で自動実行
+- 赤→緑→青→黄→紫→シアン→オレンジ→ピンク→白→消灯の順次切り替え
+- ログ出力でカラーコード（0x006lX）表示
+
+**使用方法**:
+```bash
+# ビルド・フラッシュ
+. $HOME/esp/esp-idf/export.sh
+idf.py build
+idf.py flash monitor
+```
+
+**動作確認**:
+- ✅ ビルド成功（API仕様修正済み）
+- ✅ RGBLED HAL初期化（白色点灯）
+- ✅ 5秒間隔自動色変更デモ
+- ✅ ESP-IDF RMT + led_strip統合
 
 ## CLI機能の設計指針
 

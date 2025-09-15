@@ -15,4 +15,8 @@ idf_component_register(
         nvs_flash
         spi_flash
         stampfly_hal
+        stampfly_rgbled
+    PRIV_REQUIRES
+        esp_driver_usb_serial_jtag
+        vfs
 )
