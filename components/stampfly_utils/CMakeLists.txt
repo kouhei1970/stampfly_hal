@@ -3,6 +3,7 @@
 
 idf_component_register(
     SRCS 
+        "src/placeholder.cpp"
         # "src/math_utils.cpp"
         # "src/filter_utils.cpp"
         # "src/calibration.cpp"

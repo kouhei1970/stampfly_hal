@@ -68,8 +68,10 @@ cd stampfly_hal
 idf.py build
 
 # 4. StampFlyにフラッシュ
-idf.py -p /dev/ttyUSB0 flash monitor
+idf.py -p /dev/tty.usbmodem1101 flash monitor
 ```
+注：'tty.usbmodem1101'は自分の環境に合わせて変える必要があります。
+'ls /dev'で調べられます。
 
 ## 💻 使用方法
 
