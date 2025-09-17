@@ -464,7 +464,8 @@ esp_err_t BMI270::upload_config_file() {
         }
 
         // Update address pointers for next chunk
-        addr_offset += bytes_to_write;  // BMI270 requires byte addressing
+        // BMI270 uses word addressing (16-bit), so increment by half the byte count
+        addr_offset += bytes_to_write / 2;  // Word addressing: increment by number of 16-bit words
         ret = write_register(REG_INIT_ADDR_0, addr_offset & 0xFF);
         if (ret != ESP_OK) return ret;
         ret = write_register(REG_INIT_ADDR_1, (addr_offset >> 8) & 0xFF);
