@@ -22,6 +22,12 @@ StampFly HALは、M5Stack社のStampFly（ESP32-S3ベースクアッドコプタ
 - **BMI270** 6軸IMU (CS:46, 10MHz, Mode 0)
 - **PMW3901** オプティカルフローセンサー (CS:47, 2MHz, Mode 3)
 
+*** StampFly SPI Pin 配置
+- PIN_NUM_MISO (43)
+- PIN_NUM_MOSI (14)
+- PIN_NUM_CLK (44)
+- PIN_CS (46)
+
 **I2C接続 (SDA:3, SCL:4, 400kHz)**
 - **BMM150** 3軸磁気センサー (0x10)
 - **BMP280** 気圧センサー (0x76)

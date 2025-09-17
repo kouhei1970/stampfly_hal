@@ -2,13 +2,17 @@
 
 #include <esp_err.h>
 #include <esp_log.h>
-#include <stdarg.h>
 
 namespace stampfly_hal {
 
 /**
  * HAL基底クラス
  * 全てのHALコンポーネントが継承する統一インターフェース
+ *
+ * 各派生クラスでは、ログ出力用にstaticなTAGを定義することを推奨：
+ * static constexpr const char* TAG = "クラス名";
+ * そしてESP_LOGマクロを直接使用：
+ * ESP_LOGI(TAG, "message");
  */
 class HALBase {
 public:
@@ -30,7 +34,6 @@ public:
 
     // デバッグ支援
     virtual void print_status() const;
-    void log(esp_log_level_t level, const char* format, ...) const;
 
 protected:
     esp_err_t set_error(esp_err_t error);

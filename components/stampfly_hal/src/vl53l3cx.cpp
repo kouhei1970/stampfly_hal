@@ -2,11 +2,13 @@
 
 namespace stampfly_hal {
 
+static constexpr const char* TAG = "VL53L3CX";
+
 VL53L3CX::VL53L3CX() : HALBase("VL53L3CX") {
 }
 
 esp_err_t VL53L3CX::init() {
-    log(ESP_LOG_INFO, "VL53L3CX ToF distance sensor init - placeholder implementation");
+    ESP_LOGI(TAG, "VL53L3CX ToF distance sensor init - placeholder implementation");
     set_initialized(true);
     return ESP_OK;
 }
@@ -32,17 +34,17 @@ esp_err_t VL53L3CX::reset() {
 }
 
 esp_err_t VL53L3CX::read_distance(uint16_t* distance_mm) {
-    log(ESP_LOG_INFO, "read_distance - not implemented");
+    ESP_LOGI(TAG, "read_distance - not implemented");
     return ESP_ERR_NOT_SUPPORTED;
 }
 
 esp_err_t VL53L3CX::set_timing_budget(uint32_t budget_us) {
-    log(ESP_LOG_INFO, "set_timing_budget %lu us - not implemented", budget_us);
+    ESP_LOGI(TAG, "set_timing_budget %lu us - not implemented", budget_us);
     return ESP_ERR_NOT_SUPPORTED;
 }
 
 esp_err_t VL53L3CX::set_distance_mode(uint8_t mode) {
-    log(ESP_LOG_INFO, "set_distance_mode %d - not implemented", mode);
+    ESP_LOGI(TAG, "set_distance_mode %d - not implemented", mode);
     return ESP_ERR_NOT_SUPPORTED;
 }
 

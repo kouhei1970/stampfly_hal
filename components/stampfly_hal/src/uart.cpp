@@ -16,6 +16,8 @@
 
 namespace stampfly_hal {
 
+static constexpr const char* TAG = "UartHal";
+
 UartHal::UartHal(const UARTConfig& config) 
     : HALBase("UART_HAL"), config_(config), printf_redirected_(false) 
 {
@@ -31,11 +33,11 @@ UartHal::~UartHal()
 esp_err_t UartHal::init() 
 {
     if (is_initialized()) {
-        log(ESP_LOG_WARN, "Already initialized");
+        ESP_LOGW(TAG, "Already initialized");
         return ESP_OK;
     }
 
-    log(ESP_LOG_INFO, "Initializing UART%d", config_.port);
+    ESP_LOGI(TAG, "Initializing UART%d", config_.port);
 
     // ピン設定
     esp_err_t ret = configure_pins();
@@ -50,7 +52,7 @@ esp_err_t UartHal::init()
     }
 
     set_initialized(true);
-    log(ESP_LOG_INFO, "UART%d initialized successfully", config_.port);
+    ESP_LOGI(TAG, "UART%d initialized successfully", config_.port);
     
     return ESP_OK;
 }
@@ -87,7 +89,7 @@ esp_err_t UartHal::configure()
         return set_error(ret);
     }
 
-    log(ESP_LOG_INFO, "UART%d configured: %ld baud, %d data bits", 
+    ESP_LOGI(TAG, "UART%d configured: %ld baud, %d data bits",
         config_.port, config_.baud_rate, config_.data_bits + 5);
     
     return ESP_OK;
@@ -100,7 +102,7 @@ esp_err_t UartHal::redirect_printf()
     }
 
     if (printf_redirected_) {
-        log(ESP_LOG_WARN, "printf already redirected");
+        ESP_LOGW(TAG, "printf already redirected");
         return ESP_OK;
     }
 
@@ -108,7 +110,7 @@ esp_err_t UartHal::redirect_printf()
     uart_vfs_dev_use_driver(config_.port);
     printf_redirected_ = true;
     
-    log(ESP_LOG_INFO, "printf redirected to UART%d", config_.port);
+    ESP_LOGI(TAG, "printf redirected to UART%d", config_.port);
     return ESP_OK;
 }
 
@@ -250,10 +252,10 @@ esp_err_t UartHal::configure_pins()
         esp_err_t ret = uart_set_pin(config_.port, config_.tx_pin, config_.rx_pin, 
                                      config_.rts_pin, config_.cts_pin);
         if (ret != ESP_OK) {
-            log(ESP_LOG_ERROR, "Failed to set UART pins: %s", esp_err_to_name(ret));
+            ESP_LOGE(TAG, "Failed to set UART pins: %s", esp_err_to_name(ret));
             return ret;
         }
-        log(ESP_LOG_INFO, "UART%d pins: TX=%d, RX=%d", config_.port, config_.tx_pin, config_.rx_pin);
+        ESP_LOGI(TAG, "UART%d pins: TX=%d, RX=%d", config_.port, config_.tx_pin, config_.rx_pin);
     }
     
     return ESP_OK;
@@ -281,7 +283,7 @@ esp_err_t UartHal::install_driver()
                                         config_.tx_buffer_size, 0, NULL, 
                                         config_.intr_alloc_flags);
     if (ret != ESP_OK) {
-        log(ESP_LOG_ERROR, "Failed to install UART driver: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to install UART driver: %s", esp_err_to_name(ret));
         return ret;
     }
 
@@ -289,7 +291,7 @@ esp_err_t UartHal::install_driver()
     ret = uart_param_config(config_.port, &uart_config);
     if (ret != ESP_OK) {
         uart_driver_delete(config_.port);
-        log(ESP_LOG_ERROR, "Failed to configure UART parameters: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to configure UART parameters: %s", esp_err_to_name(ret));
         return ret;
     }
 

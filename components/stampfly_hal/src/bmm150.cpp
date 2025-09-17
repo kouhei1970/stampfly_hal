@@ -2,11 +2,13 @@
 
 namespace stampfly_hal {
 
+static constexpr const char* TAG = "BMM150";
+
 BMM150::BMM150() : HALBase("BMM150") {
 }
 
 esp_err_t BMM150::init() {
-    log(ESP_LOG_INFO, "BMM150 3-axis magnetometer init - placeholder implementation");
+    ESP_LOGI(TAG, "BMM150 3-axis magnetometer init - placeholder implementation");
     set_initialized(true);
     return ESP_OK;
 }
@@ -32,12 +34,12 @@ esp_err_t BMM150::reset() {
 }
 
 esp_err_t BMM150::read_mag(float* x, float* y, float* z) {
-    log(ESP_LOG_INFO, "read_mag - not implemented");
+    ESP_LOGI(TAG, "read_mag - not implemented");
     return ESP_ERR_NOT_SUPPORTED;
 }
 
 esp_err_t BMM150::calibrate() {
-    log(ESP_LOG_INFO, "calibrate - not implemented");
+    ESP_LOGI(TAG, "calibrate - not implemented");
     return ESP_ERR_NOT_SUPPORTED;
 }
 

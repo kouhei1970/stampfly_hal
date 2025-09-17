@@ -2,12 +2,14 @@
 
 namespace stampfly_hal {
 
+static constexpr const char* TAG = "Gpio";
+
 Gpio::Gpio() : HALBase("GPIO") {
 }
 
 esp_err_t Gpio::init() {
     // プレースホルダー実装
-    log(ESP_LOG_INFO, "GPIO HAL init - placeholder implementation");
+    ESP_LOGI(TAG, "GPIO HAL init - placeholder implementation");
     set_initialized(true);
     return ESP_OK;
 }
@@ -38,19 +40,19 @@ esp_err_t Gpio::reset() {
 
 esp_err_t Gpio::set_pin_mode(gpio_num_t pin, gpio_mode_t mode) {
     // プレースホルダー実装
-    log(ESP_LOG_INFO, "set_pin_mode GPIO%d mode=%d - not implemented", pin, mode);
+    ESP_LOGI(TAG, "set_pin_mode GPIO%d mode=%d - not implemented", pin, mode);
     return ESP_ERR_NOT_SUPPORTED;
 }
 
 esp_err_t Gpio::digital_write(gpio_num_t pin, uint32_t level) {
     // プレースホルダー実装
-    log(ESP_LOG_INFO, "digital_write GPIO%d level=%lu - not implemented", pin, level);
+    ESP_LOGI(TAG, "digital_write GPIO%d level=%lu - not implemented", pin, level);
     return ESP_ERR_NOT_SUPPORTED;
 }
 
 int Gpio::digital_read(gpio_num_t pin) {
     // プレースホルダー実装
-    log(ESP_LOG_INFO, "digital_read GPIO%d - not implemented", pin);
+    ESP_LOGI(TAG, "digital_read GPIO%d - not implemented", pin);
     return -1;
 }
 

@@ -2,6 +2,8 @@
 
 namespace stampfly_hal {
 
+static constexpr const char* TAG = "StampS3Led";
+
 StampS3Led::StampS3Led()
     : HALBase("StampS3LED"),
       led_strip_(nullptr),
@@ -17,11 +19,11 @@ StampS3Led::~StampS3Led() {
 
 esp_err_t StampS3Led::init() {
     if (is_initialized()) {
-        log(ESP_LOG_WARN, "Already initialized");
+        ESP_LOGW(TAG, "Already initialized");
         return ESP_OK;
     }
 
-    log(ESP_LOG_INFO, "Initializing StampS3 onboard LED (GPIO%d)", STAMPS3_LED_GPIO);
+    ESP_LOGI(TAG, "Initializing StampS3 onboard LED (GPIO%d)", STAMPS3_LED_GPIO);
 
     // LED Strip設定（StampS3固定仕様）
     led_strip_config_t strip_config = {};
@@ -40,17 +42,17 @@ esp_err_t StampS3Led::init() {
     // LED Strip初期化
     esp_err_t ret = led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip_);
     if (ret != ESP_OK) {
-        log(ESP_LOG_ERROR, "Failed to initialize StampS3 LED: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to initialize StampS3 LED: %s", esp_err_to_name(ret));
         return set_error(ret);
     }
 
     set_initialized(true);
-    log(ESP_LOG_INFO, "StampS3 LED initialized successfully");
+    ESP_LOGI(TAG, "StampS3 LED initialized successfully");
 
     // 初期設定として青色点灯（StampS3識別用）
     ret = set_blue();
     if (ret != ESP_OK) {
-        log(ESP_LOG_ERROR, "Failed to set initial color: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to set initial color: %s", esp_err_to_name(ret));
     }
 
     return ESP_OK;
@@ -75,7 +77,7 @@ esp_err_t StampS3Led::disable() {
     if (led_strip_) {
         esp_err_t ret = led_strip_del(led_strip_);
         if (ret != ESP_OK) {
-            log(ESP_LOG_ERROR, "Failed to delete LED strip: %s", esp_err_to_name(ret));
+            ESP_LOGE(TAG, "Failed to delete LED strip: %s", esp_err_to_name(ret));
             return set_error(ret);
         }
         led_strip_ = nullptr;
@@ -83,7 +85,7 @@ esp_err_t StampS3Led::disable() {
 
     set_initialized(false);
     set_enabled(false);
-    log(ESP_LOG_INFO, "StampS3 LED disabled");
+    ESP_LOGI(TAG, "StampS3 LED disabled");
     return ESP_OK;
 }
 
@@ -118,7 +120,7 @@ esp_err_t StampS3Led::set_rgb(uint8_t red, uint8_t green, uint8_t blue) {
     // StampS3の単一LEDに色を設定
     esp_err_t ret = led_strip_set_pixel(led_strip_, 0, r, g, b);
     if (ret != ESP_OK) {
-        log(ESP_LOG_ERROR, "Failed to set LED color: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to set LED color: %s", esp_err_to_name(ret));
         return set_error(ret);
     }
 
@@ -128,7 +130,7 @@ esp_err_t StampS3Led::set_rgb(uint8_t red, uint8_t green, uint8_t blue) {
 
 esp_err_t StampS3Led::set_brightness(uint8_t brightness) {
     brightness_ = brightness;
-    log(ESP_LOG_INFO, "StampS3 LED brightness set to %d/255", brightness);
+    ESP_LOGI(TAG, "StampS3 LED brightness set to %d/255", brightness);
 
     // 現在の色を再適用して輝度を反映
     if (is_initialized() && current_color_ != 0) {
@@ -144,7 +146,7 @@ esp_err_t StampS3Led::clear() {
 
     esp_err_t ret = led_strip_clear(led_strip_);
     if (ret != ESP_OK) {
-        log(ESP_LOG_ERROR, "Failed to clear StampS3 LED: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to clear StampS3 LED: %s", esp_err_to_name(ret));
         return set_error(ret);
     }
 
@@ -159,7 +161,7 @@ esp_err_t StampS3Led::refresh() {
 
     esp_err_t ret = led_strip_refresh(led_strip_);
     if (ret != ESP_OK) {
-        log(ESP_LOG_ERROR, "Failed to refresh StampS3 LED: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to refresh StampS3 LED: %s", esp_err_to_name(ret));
         return set_error(ret);
     }
 
@@ -181,7 +183,7 @@ esp_err_t StampS3Led::apply_brightness(uint32_t color, uint8_t& r, uint8_t& g, u
 
 void StampS3Led::print_status() const {
     HALBase::print_status();
-    log(ESP_LOG_INFO, "GPIO: %d, Brightness: %d/255, Color: 0x%06lX",
+    ESP_LOGI(TAG, "GPIO: %d, Brightness: %d/255, Color: 0x%06lX",
         STAMPS3_LED_GPIO, brightness_, current_color_);
 }
 

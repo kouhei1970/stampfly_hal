@@ -13,6 +13,8 @@
 
 namespace stampfly_hal {
 
+static constexpr const char* TAG = "I2cHal";
+
 // StampFly搭載I2Cデバイス情報
 static const I2CDeviceInfo stampfly_devices[] = {
     {0x10, 1000, "BMM150"},     // BMM150 3軸磁気センサー
@@ -39,11 +41,11 @@ I2cHal::~I2cHal()
 esp_err_t I2cHal::init() 
 {
     if (is_initialized()) {
-        log(ESP_LOG_WARN, "Already initialized");
+        ESP_LOGW(TAG, "Already initialized");
         return ESP_OK;
     }
 
-    log(ESP_LOG_INFO, "Initializing I2C port %d", config_.port);
+    ESP_LOGI(TAG, "Initializing I2C port %d", config_.port);
 
     // ピン設定確認
     esp_err_t ret = validate_pins();
@@ -58,7 +60,7 @@ esp_err_t I2cHal::init()
     }
 
     set_initialized(true);
-    log(ESP_LOG_INFO, "I2C port %d initialized successfully", config_.port);
+    ESP_LOGI(TAG, "I2C port %d initialized successfully", config_.port);
     
     return ESP_OK;
 }
@@ -83,7 +85,7 @@ esp_err_t I2cHal::configure()
         return set_error(ESP_ERR_INVALID_STATE);
     }
 
-    log(ESP_LOG_INFO, "I2C port %d configured: %lu Hz", config_.port, config_.clk_speed_hz);
+    ESP_LOGI(TAG, "I2C port %d configured: %lu Hz", config_.port, config_.clk_speed_hz);
     return ESP_OK;
 }
 
@@ -97,7 +99,7 @@ int I2cHal::scan_devices(uint8_t* found_devices, size_t max_devices)
         return -1;
     }
 
-    log(ESP_LOG_INFO, "Scanning I2C devices...");
+    ESP_LOGI(TAG, "Scanning I2C devices...");
     
     int found_count = 0;
     
@@ -106,11 +108,11 @@ int I2cHal::scan_devices(uint8_t* found_devices, size_t max_devices)
         if (is_device_present(addr)) {
             found_devices[found_count] = addr;
             found_count++;
-            log(ESP_LOG_INFO, "Found device at address 0x%02X", addr);
+            ESP_LOGI(TAG, "Found device at address 0x%02X", addr);
         }
     }
 
-    log(ESP_LOG_INFO, "I2C scan completed: %d devices found", found_count);
+    ESP_LOGI(TAG, "I2C scan completed: %d devices found", found_count);
     return found_count;
 }
 
@@ -263,12 +265,12 @@ esp_err_t I2cHal::init_bus()
 
     esp_err_t ret = i2c_new_master_bus(&bus_config, &bus_handle_);
     if (ret != ESP_OK) {
-        log(ESP_LOG_ERROR, "Failed to initialize I2C bus: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to initialize I2C bus: %s", esp_err_to_name(ret));
         return ret;
     }
 
     bus_initialized_ = true;
-    log(ESP_LOG_INFO, "I2C bus initialized: SDA=%d, SCL=%d, %lu Hz", 
+    ESP_LOGI(TAG, "I2C bus initialized: SDA=%d, SCL=%d, %lu Hz",
         config_.sda_pin, config_.scl_pin, config_.clk_speed_hz);
     
     return ESP_OK;
@@ -278,17 +280,17 @@ esp_err_t I2cHal::validate_pins()
 {
     // ピン番号の有効性チェック
     if (config_.sda_pin < 0 || config_.scl_pin < 0) {
-        log(ESP_LOG_ERROR, "Invalid pin configuration");
+        ESP_LOGE(TAG, "Invalid pin configuration");
         return ESP_ERR_INVALID_ARG;
     }
 
     // ピンの重複チェック
     if (config_.sda_pin == config_.scl_pin) {
-        log(ESP_LOG_ERROR, "SDA and SCL pins cannot be the same");
+        ESP_LOGE(TAG, "SDA and SCL pins cannot be the same");
         return ESP_ERR_INVALID_ARG;
     }
 
-    log(ESP_LOG_DEBUG, "Pin configuration validated");
+    ESP_LOGD(TAG, "Pin configuration validated");
     return ESP_OK;
 }
 
@@ -310,7 +312,7 @@ esp_err_t I2cHal::device_communicate(uint8_t device_addr,
     i2c_master_dev_handle_t dev_handle;
     esp_err_t ret = i2c_master_bus_add_device(bus_handle_, &dev_config, &dev_handle);
     if (ret != ESP_OK) {
-        log(ESP_LOG_ERROR, "Failed to add I2C device 0x%02X: %s", device_addr, esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to add I2C device 0x%02X: %s", device_addr, esp_err_to_name(ret));
         return set_error(ret);
     }
 
@@ -334,7 +336,7 @@ esp_err_t I2cHal::device_communicate(uint8_t device_addr,
     i2c_master_bus_rm_device(dev_handle);
 
     if (ret != ESP_OK) {
-        log(ESP_LOG_DEBUG, "I2C communication failed with device 0x%02X: %s", 
+        ESP_LOGD(TAG, "I2C communication failed with device 0x%02X: %s",
             device_addr, esp_err_to_name(ret));
         return set_error(ret);
     }

@@ -47,9 +47,16 @@ public:
     esp_err_t clear();
     esp_err_t refresh();
 
+    // 個別LED制御機能
+    esp_err_t set_led_color(int led_index, uint32_t color);
+    esp_err_t set_led_color(int led_index, Color color);
+    esp_err_t set_led_rgb(int led_index, uint8_t red, uint8_t green, uint8_t blue);
+    esp_err_t clear_led(int led_index);
+
     // 状態取得
     uint8_t get_brightness() const { return brightness_; }
     uint32_t get_current_color() const { return current_color_; }
+    uint32_t get_led_color(int led_index) const;
 
     // デバッグ
     void print_status() const override;
@@ -58,6 +65,7 @@ private:
     led_strip_handle_t led_strip_;
     uint8_t brightness_;
     uint32_t current_color_;
+    uint32_t led_colors_[2];  // 各LEDの色を記録
     int led_gpio_;
 
     static constexpr int LED_COUNT = 2;
