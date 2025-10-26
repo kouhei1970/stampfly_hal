@@ -139,6 +139,10 @@ esp_err_t BMI270::init() {
     }
     ESP_LOGI(TAG, "✅ INIT_CTRL prepared (0x00)");
 
+    // Wait 5ms after INIT_CTRL preparation
+    vTaskDelay(pdMS_TO_TICKS(5));
+    ESP_LOGI(TAG, "Waited 5ms after INIT_CTRL preparation");
+
     // Phase 7: Reset INIT_ADDR registers
     ESP_LOGI(TAG, "Phase 7: Resetting INIT_ADDR registers");
     ret = write_register(REG_INIT_ADDR_0, 0x00);
@@ -467,36 +471,36 @@ esp_err_t BMI270::upload_config_file() {
     const uint8_t* config_data = bmi270_config_file;
     size_t config_size = sizeof(bmi270_config_file);
     size_t chunk_size = 256;
-    uint16_t word_addr = 0;
 
-    for (size_t i = 0; i < config_size; i += chunk_size) {
-        size_t bytes_to_write = (i + chunk_size > config_size) ? (config_size - i) : chunk_size;
+    for (size_t offset = 0; offset < config_size; offset += chunk_size) {
+        size_t bytes_to_write = (offset + chunk_size > config_size) ? (config_size - offset) : chunk_size;
 
-        // Write chunk data to INIT_DATA register
-        esp_err_t ret = burst_write(REG_INIT_DATA, &config_data[i], bytes_to_write);
+        // 1. Set INIT_ADDR BEFORE writing chunk (BMI270 specification)
+        uint16_t word_addr = offset / 2;  // Word addressing (bytes / 2)
+        uint8_t addr_buf[2] = {
+            static_cast<uint8_t>(word_addr & 0xFF),         // LSB
+            static_cast<uint8_t>((word_addr >> 8) & 0xFF)   // MSB
+        };
+
+        // Write INIT_ADDR as 2-byte burst (starting at REG_INIT_ADDR_0)
+        esp_err_t ret = burst_write(REG_INIT_ADDR_0, addr_buf, 2);
         if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "❌ Failed to write config chunk at offset %zu: %s", i, esp_err_to_name(ret));
+            ESP_LOGE(TAG, "❌ Failed to set INIT_ADDR at offset %zu: %s", offset, esp_err_to_name(ret));
             return ret;
         }
 
-        // Update word address for next chunk (BMI270 uses word addressing: bytes/2)
-        word_addr += bytes_to_write / 2;
-        ret = write_register(REG_INIT_ADDR_0, word_addr & 0xFF);
+        // 2. Write chunk data to INIT_DATA register (AFTER setting INIT_ADDR)
+        ret = burst_write(REG_INIT_DATA, &config_data[offset], bytes_to_write);
         if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "❌ Failed to update INIT_ADDR_0: %s", esp_err_to_name(ret));
-            return ret;
-        }
-        ret = write_register(REG_INIT_ADDR_1, (word_addr >> 8) & 0xFF);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "❌ Failed to update INIT_ADDR_1: %s", esp_err_to_name(ret));
+            ESP_LOGE(TAG, "❌ Failed to write config chunk at offset %zu: %s", offset, esp_err_to_name(ret));
             return ret;
         }
 
         // Progress report every 2048 bytes (8 chunks)
-        if ((i / chunk_size) % 8 == 0) {
+        if ((offset / chunk_size) % 8 == 0) {
             ESP_LOGI(TAG, "Config upload progress: %zu/%zu bytes (%.1f%%)",
-                     i + bytes_to_write, config_size,
-                     ((float)(i + bytes_to_write) / config_size) * 100.0f);
+                     offset + bytes_to_write, config_size,
+                     ((float)(offset + bytes_to_write) / config_size) * 100.0f);
         }
     }
 
