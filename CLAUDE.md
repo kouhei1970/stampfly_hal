@@ -514,15 +514,34 @@ stamps3_led.set_color(0xFF9933);  // 直接色指定
 
 ## 依存関係管理
 
-### ESP-IDF依存関係システム
-- **`dependencies.lock`**: ESP-IDFが直接参照する依存関係ロックファイル
-  - バージョン固定: `espressif/led_strip v3.0.1~1`
-  - 再現可能ビルド保証
+### ESP-IDF Component Manager（自動依存関係管理システム）
+
+#### `dependencies.lock` - 依存関係ロックファイル
+- **役割**: プロジェクトが使用する外部コンポーネントのバージョンを固定
+- **管理対象**:
+  - `espressif/led_strip v3.0.1~1` (WS2812B LED制御ドライバー)
+- **利点**:
+  - 再現可能ビルド保証（誰がビルドしても同じバージョン）
   - チーム開発での環境統一
-- **`managed_components/`**: 自動生成キャッシュフォルダ
-  - ビルド時にESP-IDFが自動作成・管理
-  - `.gitignore`で除外済み（適切な設定）
-  - 削除しても自動復元される
+  - バージョン競合の自動解決
+- **編集**: 通常は手動編集不要（ESP-IDFが自動管理）
+
+#### `managed_components/` - 自動生成キャッシュフォルダ（触らない）
+- **⚠️ 重要**: このフォルダは**ESP-IDFが自動管理**するため、手動操作不要
+- **役割**: `dependencies.lock`に記載された外部コンポーネントの実体を格納
+- **現在の内容**:
+  - `espressif__led_strip/` - RGB LED制御に使用中（StampFly必須）
+- **自動処理の流れ**:
+  1. `idf.py build` 実行
+  2. ESP-IDFが `dependencies.lock` を読み取り
+  3. https://components.espressif.com/ から必要なコンポーネントをダウンロード
+  4. `managed_components/` に自動展開
+- **Git管理**: `.gitignore`で除外済み（正しい設定）
+  - リポジトリには含めない（各自のビルド時に自動生成される）
+  - チーム開発でも問題なし（`dependencies.lock`があれば全員同じ環境）
+- **削除可能**: 誤って削除しても次回ビルド時に自動復元される
+- **移動不可**: ESP-IDFがこの場所に自動生成するため移動・リネーム不要
+- **まとめ**: **現状維持推奨** - 放置しておけば問題なし
 
 ## プロジェクト構造
 
