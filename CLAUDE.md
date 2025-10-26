@@ -11,19 +11,42 @@ StampFly HAL開発プロジェクト - M5Stack社のStampFly（ESP32-S3ベース
 
 ## 基本コマンド
 
+### 🚀 推奨開発フロー（utilities使用）
+
+**StampFly専用ユーティリティを使用した開発フローを推奨します。**
+
+```bash
+# ビルド→フラッシュ→モニター（一括実行）【推奨】
+python3 utilities/flash_monitor.py
+
+# シリアルモニターのみ（再フラッシュ不要時）
+python3 utilities/monitor.py
+
+# ビルドのみ（エラー確認）
+python3 utilities/flash_monitor.py --build-only
+
+# フラッシュのみ（ビルド済み）
+python3 utilities/flash_monitor.py --flash-only
+```
+
+**理由:** `idf.py monitor`は非対話型環境（Claude Code等）で動作しないため、専用ユーティリティを標準としています。詳細は [utilities/README.md](utilities/README.md) を参照。
+
 ### 環境セットアップ
 ```bash
 # ESP-IDF環境の読み込み（必須）
 . $HOME/esp/esp-idf/export.sh
+
+# pyserialインストール（初回のみ）
+pip3 install pyserial
 ```
 
-### ビルド・実行コマンド
+### ビルド・実行コマンド（従来方式）
 ```bash
 # プロジェクトビルド
 idf.py build
 
-# デバイスへフラッシュ＋シリアルモニタ
-idf.py flash monitor
+# デバイスへフラッシュ
+idf.py -p /dev/cu.usbmodem101 flash
 
 # プロジェクト設定
 idf.py menuconfig
@@ -35,14 +58,7 @@ idf.py fullclean
 idf.py build -C components/[component_name]
 ```
 
-### テストコマンド
-```bash
-# Pythonテスト実行
-python pytest_hello_world.py
-
-# カスタムモニタリングスクリプト
-python test_monitor.py
-```
+**注意:** `idf.py flash monitor` は非対話型環境では動作しません。`utilities/flash_monitor.py` の使用を推奨します。
 
 ## 現在のアーキテクチャ
 
@@ -552,11 +568,20 @@ stampfly_hal/
 ├── .gitignore                  # managed_components/除外設定済み
 ├── CLAUDE.md                   # プロジェクト仕様・実装記録
 ├── CMakeLists.txt              # 統合HALのみ参照
+├── archive/                    # 使用予定のないファイル
+│   ├── debug_tests/            # デバッグテストコード
+│   ├── images/                 # スクリーンショット
+│   └── scripts/                # 旧モニタリングスクリプト
 ├── components/
 │   └── stampfly_hal/           # 統一HALコンポーネント（完全統合済み）
 ├── dependencies.lock           # ESP-IDF依存関係管理（必須）
+├── docs/                       # 技術ドキュメント
 ├── main/                       # 統合APIに対応済み
 ├── managed_components/         # 自動生成（.gitignore除外）
+├── utilities/                  # 開発ユーティリティ（推奨）
+│   ├── monitor.py              # シリアルモニター
+│   ├── flash_monitor.py        # ビルド・フラッシュ・モニター統合
+│   └── README.md               # ユーティリティ使用方法
 ├── sdkconfig*                  # ESP-IDF設定
 └── README.md
 ```
