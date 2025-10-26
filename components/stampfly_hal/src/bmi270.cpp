@@ -21,105 +21,141 @@ esp_err_t BMI270::init() {
         return ESP_OK;
     }
 
-    ESP_LOGI(TAG, "🚀 Starting BMI270 complete initialization sequence");
+    ESP_LOGI(TAG, "=== BMI270 Initialization Start ===");
 
-    // Phase 1: SPI communication setup
+    // Phase 1: Setup SPI interface
+    ESP_LOGI(TAG, "Phase 1: Setting up SPI interface");
     esp_err_t ret = setup_spi();
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to setup SPI: %s", esp_err_to_name(ret));
-        return set_error(ret);
+        ESP_LOGE(TAG, "❌ SPI setup failed");
+        return ret;
     }
 
-    // Wait for POR completion (450μs minimum)
-    vTaskDelay(pdMS_TO_TICKS(1));
-
-    // Phase 2: I2C to SPI mode switching
-    ESP_LOGI(TAG, "Phase 2: I2C to SPI mode switching");
-    ret = switch_to_spi_mode();
+    // Phase 2: Software reset (for host reboot while BMI270 powered)
+    ESP_LOGI(TAG, "Phase 2: Performing software reset");
+    ret = write_register(REG_CMD, CMD_SOFT_RESET);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to switch to SPI mode: %s", esp_err_to_name(ret));
-        return set_error(ret);
+        ESP_LOGE(TAG, "❌ Software reset failed");
+        return ret;
     }
 
-    // Phase 2.5: Test SPI write/read functionality
-    ESP_LOGI(TAG, "Phase 2.5: Testing SPI write/read functionality");
-    ret = test_spi_communication();
+    // Wait 5ms for reset completion
+    vTaskDelay(pdMS_TO_TICKS(5));
+    ESP_LOGI(TAG, "Waited 5ms after software reset");
+
+    // Phase 3: Read CHIP_ID twice, verify 2nd read = 0x24
+    ESP_LOGI(TAG, "Phase 3: Reading CHIP_ID twice for SPI recovery");
+
+    // First CHIP_ID read (dummy read for SPI recovery)
+    uint8_t chip_id_1st;
+    ret = read_register(REG_CHIP_ID, &chip_id_1st);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "SPI write/read test failed: %s", esp_err_to_name(ret));
-        return set_error(ret);
+        ESP_LOGW(TAG, "1st CHIP_ID read failed (expected): %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "1st CHIP_ID read: 0x%02X", chip_id_1st);
     }
 
-    // Phase 3: Disable advanced power save
-    ESP_LOGI(TAG, "Phase 3: Disabling advanced power save");
-    ret = disable_advanced_power_save();
+    // Wait 5ms before 2nd read for SPI stabilization
+    vTaskDelay(pdMS_TO_TICKS(5));
+    ESP_LOGI(TAG, "Waited 5ms before 2nd CHIP_ID read");
+
+    // Second CHIP_ID read (must be 0x24)
+    uint8_t chip_id_2nd;
+    ret = read_register(REG_CHIP_ID, &chip_id_2nd);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to disable advanced power save: %s", esp_err_to_name(ret));
-        return set_error(ret);
+        ESP_LOGE(TAG, "❌ 2nd CHIP_ID read failed: %s", esp_err_to_name(ret));
+        return ret;
     }
 
-    // Phase 4: Upload configuration file
-    ESP_LOGI(TAG, "Phase 4: Uploading configuration file");
-    ret = upload_config_file();
+    ESP_LOGI(TAG, "2nd CHIP_ID read: 0x%02X", chip_id_2nd);
+
+    if (chip_id_2nd != CHIP_ID_VALUE) {
+        ESP_LOGE(TAG, "❌ 2nd CHIP_ID verification failed! Got: 0x%02X, Expected: 0x%02X",
+                 chip_id_2nd, CHIP_ID_VALUE);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+
+    ESP_LOGI(TAG, "✅ CHIP_ID verified successfully: 0x%02X", chip_id_2nd);
+
+    // Wait 5ms after CHIP_ID verification
+    vTaskDelay(pdMS_TO_TICKS(5));
+    ESP_LOGI(TAG, "Waited 5ms after CHIP_ID verification");
+
+    // Phase 4: Verify PWR_CONF register is 0x03 (APS enabled by default)
+    ESP_LOGI(TAG, "Phase 4: Verifying PWR_CONF register (should be 0x03 after reset)");
+    uint8_t pwr_conf;
+    ret = read_register(REG_PWR_CONF, &pwr_conf);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to upload config file: %s", esp_err_to_name(ret));
-        return set_error(ret);
+        ESP_LOGE(TAG, "❌ Failed to read PWR_CONF register: %s", esp_err_to_name(ret));
+        return ret;
     }
 
-    // Phase 5: Wait for initialization completion
-    ESP_LOGI(TAG, "Phase 5: Waiting for initialization completion");
-    ret = wait_for_initialization();
+    ESP_LOGI(TAG, "PWR_CONF register value: 0x%02X", pwr_conf);
+
+    if (pwr_conf == 0x03) {
+        ESP_LOGI(TAG, "✅ PWR_CONF is 0x03 (Advanced Power Save enabled - default state)");
+    } else {
+        ESP_LOGW(TAG, "⚠️ PWR_CONF is 0x%02X (expected 0x03)", pwr_conf);
+    }
+
+    // Wait 5ms before disabling APS
+    vTaskDelay(pdMS_TO_TICKS(5));
+    ESP_LOGI(TAG, "Waited 5ms before disabling Advanced Power Save");
+
+    // Phase 5: Disable Advanced Power Save (write 0x00 to PWR_CONF)
+    ESP_LOGI(TAG, "Phase 5: Disabling Advanced Power Save");
+    ret = write_register(REG_PWR_CONF, 0x00);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Initialization timeout: %s", esp_err_to_name(ret));
-        return set_error(ret);
+        ESP_LOGE(TAG, "❌ Failed to disable Advanced Power Save: %s", esp_err_to_name(ret));
+        return ret;
     }
 
-    // Phase 6: Configure sensors
-    ESP_LOGI(TAG, "Phase 6: Configuring sensors");
-    ret = configure_sensors();
+    // Wait 5ms for PWR_CONF register to update
+    vTaskDelay(pdMS_TO_TICKS(5));
+    ESP_LOGI(TAG, "Waited 5ms after writing PWR_CONF = 0x00");
+
+    // Verify PWR_CONF was set to 0x00
+    uint8_t pwr_conf_verify;
+    ret = read_register(REG_PWR_CONF, &pwr_conf_verify);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to configure sensors: %s", esp_err_to_name(ret));
-        return set_error(ret);
+        ESP_LOGE(TAG, "❌ Failed to verify PWR_CONF: %s", esp_err_to_name(ret));
+        return ret;
     }
 
-    // Final verification
-    uint8_t status, error;
-    get_status(status);
-    get_error_status(error);
-    ESP_LOGI(TAG, "Status: 0x%02X, Error: 0x%02X", status, error);
+    ESP_LOGI(TAG, "PWR_CONF after disable: 0x%02X", pwr_conf_verify);
+
+    if (pwr_conf_verify == 0x00) {
+        ESP_LOGI(TAG, "✅ Advanced Power Save disabled successfully");
+    } else {
+        ESP_LOGW(TAG, "⚠️ PWR_CONF is 0x%02X (expected 0x00)", pwr_conf_verify);
+    }
 
     set_initialized(true);
-    ESP_LOGI(TAG, "✅ BMI270 complete initialization finished successfully");
+    ESP_LOGI(TAG, "=== BMI270 Initialization Complete ===");
     return ESP_OK;
 }
 
 esp_err_t BMI270::configure() {
-    if (!is_initialized()) {
-        return set_error(ESP_ERR_INVALID_STATE);
-    }
-
-    // Configuration is already done in init() method
-    ESP_LOGI(TAG, "BMI270 configured");
+    ESP_LOGI(TAG, "BMI270 configure - placeholder");
+    // TODO: Implement sensor configuration
     return ESP_OK;
 }
 
 esp_err_t BMI270::enable() {
-    if (!is_initialized()) {
-        return set_error(ESP_ERR_INVALID_STATE);
-    }
-
+    ESP_LOGI(TAG, "BMI270 enable - placeholder");
     set_enabled(true);
-    ESP_LOGI(TAG, "BMI270 enabled");
     return ESP_OK;
 }
 
 esp_err_t BMI270::disable() {
+    ESP_LOGI(TAG, "BMI270 disable - placeholder");
     set_enabled(false);
-    ESP_LOGI(TAG, "BMI270 disabled");
     return ESP_OK;
 }
 
 esp_err_t BMI270::reset() {
-    ESP_LOGI(TAG, "BMI270 reset");
+    ESP_LOGI(TAG, "BMI270 reset - placeholder");
+    // TODO: Implement reset sequence
     return ESP_OK;
 }
 
@@ -545,54 +581,24 @@ esp_err_t BMI270::configure_sensors() {
 }
 
 esp_err_t BMI270::read_accel(AccelData& data) {
-    uint8_t raw_data[6];
-    for (int i = 0; i < 6; i++) {
-        esp_err_t ret = read_register(REG_ACC_X_LSB + i, &raw_data[i]);
-        if (ret != ESP_OK) return ret;
-    }
-
-    // Convert raw data to signed 16-bit values and apply scale
-    int16_t raw_x = (int16_t)((raw_data[1] << 8) | raw_data[0]);
-    int16_t raw_y = (int16_t)((raw_data[3] << 8) | raw_data[2]);
-    int16_t raw_z = (int16_t)((raw_data[5] << 8) | raw_data[4]);
-
-    data.x = raw_x * accel_scale_;
-    data.y = raw_y * accel_scale_;
-    data.z = raw_z * accel_scale_;
-
+    // TODO: Implement accelerometer data reading
+    data.x = 0.0f;
+    data.y = 0.0f;
+    data.z = 0.0f;
     return ESP_OK;
 }
 
 esp_err_t BMI270::read_gyro(GyroData& data) {
-    uint8_t raw_data[6];
-    for (int i = 0; i < 6; i++) {
-        esp_err_t ret = read_register(REG_GYR_X_LSB + i, &raw_data[i]);
-        if (ret != ESP_OK) return ret;
-    }
-
-    // Convert raw data to signed 16-bit values and apply scale
-    int16_t raw_x = (int16_t)((raw_data[1] << 8) | raw_data[0]);
-    int16_t raw_y = (int16_t)((raw_data[3] << 8) | raw_data[2]);
-    int16_t raw_z = (int16_t)((raw_data[5] << 8) | raw_data[4]);
-
-    data.x = raw_x * gyro_scale_;
-    data.y = raw_y * gyro_scale_;
-    data.z = raw_z * gyro_scale_;
-
+    // TODO: Implement gyroscope data reading
+    data.x = 0.0f;
+    data.y = 0.0f;
+    data.z = 0.0f;
     return ESP_OK;
 }
 
 esp_err_t BMI270::read_temperature(float& temp_c) {
-    uint8_t temp_lsb, temp_msb;
-    esp_err_t ret = read_register(REG_TEMPERATURE_LSB, &temp_lsb);
-    if (ret != ESP_OK) return ret;
-    ret = read_register(REG_TEMPERATURE_MSB, &temp_msb);
-    if (ret != ESP_OK) return ret;
-
-    // Convert to temperature in Celsius
-    int16_t temp_raw = (int16_t)((temp_msb << 8) | temp_lsb);
-    temp_c = (temp_raw / 512.0f) + 23.0f;  // BMI270 temperature formula
-
+    // TODO: Implement temperature reading
+    temp_c = 25.0f;
     return ESP_OK;
 }
 
