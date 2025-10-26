@@ -252,7 +252,10 @@ esp_err_t BMI270::setup_spi() {
     }
 
     // Add BMI270 as SPI device
-    ret = spi_hal_->add_device(SPI_PIN_CS_BMI270, &device_handle_, 8000000);  // 8MHz
+    const uint32_t spi_clock_speed = 8000000;  // 8MHz (BMI270 supports up to 10MHz)
+    ESP_LOGI(TAG, "Setting SPI clock speed: %lu Hz (%.1f MHz)", spi_clock_speed, spi_clock_speed / 1000000.0f);
+
+    ret = spi_hal_->add_device(SPI_PIN_CS_BMI270, &device_handle_, spi_clock_speed);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to add BMI270 SPI device: %s", esp_err_to_name(ret));
         delete spi_hal_;
@@ -260,7 +263,8 @@ esp_err_t BMI270::setup_spi() {
         return ret;
     }
 
-    ESP_LOGI(TAG, "BMI270 SPI setup completed successfully");
+    ESP_LOGI(TAG, "BMI270 SPI setup completed successfully (CS=%d, Clock=%.1f MHz)",
+             SPI_PIN_CS_BMI270, spi_clock_speed / 1000000.0f);
     return ESP_OK;
 }
 
@@ -466,11 +470,18 @@ esp_err_t BMI270::disable_advanced_power_save() {
 }
 
 esp_err_t BMI270::upload_config_file() {
-    ESP_LOGI(TAG, "Uploading config file (8192 bytes, 256-byte chunks)");
-
     const uint8_t* config_data = bmi270_config_file;
     size_t config_size = sizeof(bmi270_config_file);
     size_t chunk_size = 256;
+
+    ESP_LOGI(TAG, "Config file array size: %zu bytes (expected: 8192 bytes)", config_size);
+
+    if (config_size != 8192) {
+        ESP_LOGE(TAG, "❌ Config file size mismatch! Got %zu bytes, expected 8192 bytes", config_size);
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    ESP_LOGI(TAG, "Uploading config file (%zu bytes, 256-byte chunks)", config_size);
 
     for (size_t offset = 0; offset < config_size; offset += chunk_size) {
         size_t bytes_to_write = (offset + chunk_size > config_size) ? (config_size - offset) : chunk_size;
