@@ -123,26 +123,16 @@ void task_led_status(void* pvParameters) {
 }
 
 extern "C" void app_main(void) {
-    // Set ESP_LOG level to DEBUG for all components
-    esp_log_level_set("*", ESP_LOG_DEBUG);
-    esp_log_level_set(TAG, ESP_LOG_DEBUG);
-    esp_log_level_set("BMI270", ESP_LOG_DEBUG);
-    esp_log_level_set("SpiHal", ESP_LOG_DEBUG);
-    esp_log_level_set("RgbLed", ESP_LOG_DEBUG);
-    esp_log_level_set("StampS3Led", ESP_LOG_DEBUG);
-    esp_log_level_set("HALBase", ESP_LOG_DEBUG);
-    esp_log_level_set("UartHal", ESP_LOG_DEBUG);
-    esp_log_level_set("I2cHal", ESP_LOG_DEBUG);
-    esp_log_level_set("GPIO", ESP_LOG_DEBUG);
-    esp_log_level_set("BMM150", ESP_LOG_DEBUG);
-    esp_log_level_set("BMP280", ESP_LOG_DEBUG);
-    esp_log_level_set("VL53L3CX", ESP_LOG_DEBUG);
-    esp_log_level_set("PMW3901", ESP_LOG_DEBUG);
-    esp_log_level_set("INA3221", ESP_LOG_DEBUG);
+    // Set ESP_LOG level to INFO for production (change to DEBUG for detailed troubleshooting)
+    // NOTE: DEBUG level causes serial bottleneck and reduces actual sampling rate
+    esp_log_level_set("*", ESP_LOG_INFO);
+    esp_log_level_set(TAG, ESP_LOG_INFO);
+    esp_log_level_set("BMI270", ESP_LOG_INFO);  // Change to ESP_LOG_DEBUG for SPI troubleshooting
+    esp_log_level_set("SpiHal", ESP_LOG_INFO);  // Change to ESP_LOG_DEBUG for SPI troubleshooting
 
     ESP_LOGI(TAG, "🚀 === StampFly HAL - BMI270 IMU Data Streaming Application ===");
     ESP_LOGI(TAG, "Features: Complete BMI270 initialization + Teleplot streaming at 500Hz");
-    ESP_LOGI(TAG, "📝 ESP_LOG Debug Mode: ENABLED for all components");
+    ESP_LOGI(TAG, "📝 ESP_LOG Level: INFO (minimal overhead for 500Hz streaming)");
 
     // Initialize NVS
     ESP_LOGI(TAG, "📝 Phase 1: NVS Flash initialization");

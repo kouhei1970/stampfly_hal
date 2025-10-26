@@ -597,19 +597,21 @@ stampfly_hal/
 ## 今後の開発予定
 
 ### センサーHAL実装ロードマップ
-1. ✅ **BMI270 (6軸IMU) - 姿勢制御基盤（2025-09-16 ESP-IDF準拠修正完了）**
+1. ✅ **BMI270 (6軸IMU) - 姿勢制御基盤（2025-10-26 完全実装・Production Ready）**
+   - **✅ 1600Hz ODR設定完了**: 加速度計・ジャイロスコープ 1600Hz, Performance Mode
+   - **✅ 500Hz Teleplotストリーミング**: 正確な500.0Hz データストリーミング達成
+   - **✅ 性能測定完了**: CPU負荷49%, レイテンシ0.65ms, 十分なヘッドルーム
+   - **✅ 高品質データ**: 加速度9.87m/s² (重力), ジャイロ~0rad/s (静止)
    - SPI通信完全実装、Bosch公式8192バイト設定ファイル統合
-   - バーストライト機能、適切な初期化シーケンス完備
    - アクセロメーター・ジャイロスコープ・温度センサー対応
-   - **✅ BMI270 SPI通信問題根本解決（2025-09-16最新）:**
-     - **ESP-IDF準拠性問題解決**: `command_bits = 8` → `0` (根本原因修正)
-     - **CHIP_ID読み取り問題解決**: コマンドフェーズ誤用の除去
-     - SPI クロック速度1MHz（初期化時の安定性確保）
-     - CSタイミング改善（pretrans/posttrans = 2クロック）
-     - ESP-IDF標準トランザクション構造に準拠
-     - 高レベルAPI削除（BMI270に不適切なため）
-     - **main.cpp簡素化**: SPI/BMI270テストに特化
-   - ✅ ビルド成功、ESP-IDF準拠修正完了、CHIP_ID 0x24読み取り成功見込み
+   - **📊 パフォーマンス仕様（実測値）**:
+     - サンプリングレート: 500.0Hz (ポーリング方式)
+     - オーバーサンプリング比: 3.2x (1600Hz ODR / 500Hz制御)
+     - CPU負荷: ~49% (IMU: 7.5%, UART: 41.3%)
+     - レイテンシ: ~0.65ms/sample
+     - 残りCPUヘッドルーム: ~51% (制御アルゴリズム実装可能)
+   - **⏳ 将来実装**: Data Ready割り込み (現在ポーリングで問題なし)
+   - 📄 **詳細レポート**: [`docs/BMI270_1600Hz_Implementation_Report.md`](docs/BMI270_1600Hz_Implementation_Report.md)
 2. BMP280 (気圧センサー) - 高度制御（次期実装予定）
 3. VL53L3CX (ToF距離センサー) - 障害物回避
 4. BMM150 (3軸磁気センサー) - ヘディング制御
@@ -632,6 +634,9 @@ stampfly_hal/
 - ArduPilot/ArduCopter
 
 ## 実装ドキュメント
+- **`docs/BMI270_1600Hz_Implementation_Report.md`**: 1600Hz ODR設定・500Hz Teleplotストリーミング完全実装レポート（2025-10-26作成）
+- **`docs/BMI270_ODR_Configuration.md`**: BMI270 ODR設定仕様・オーバーサンプリング戦略（2025-10-26作成）
+- **`docs/BMI270_Development_Proposal.md`**: BMI270開発要件・6フェーズロードマップ（2025-10-26作成）
 - **`docs/ESP-IDF_SPI_Master_Guide_for_StampFly.md`**: ESP-IDF v5.4 SPI Master APIの包括的StampFly実装ガイド（2025-09-16作成）
 - **`docs/BMI270_Implementation_Spec.md`**: BMI270実装仕様（既存）
 
