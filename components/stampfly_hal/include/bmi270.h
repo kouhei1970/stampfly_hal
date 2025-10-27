@@ -103,10 +103,18 @@ private:
     float accel_scale_;    // Scale factor for accelerometer
     float gyro_scale_;     // Scale factor for gyroscope
 
+    // CS control options for burst write
+    enum class CsControl {
+        NORMAL,      // Normal operation: CS auto-controlled (LOW during transaction, HIGH after)
+        KEEP_ACTIVE  // Keep CS active (LOW) after transaction for continuous write
+    };
+
     // Low-level SPI functions
     esp_err_t read_register(uint8_t reg_addr, uint8_t* data);
+    esp_err_t burst_read(uint8_t reg_addr, uint8_t* data, size_t len);
     esp_err_t write_register(uint8_t reg_addr, uint8_t data);
     esp_err_t burst_write(uint8_t reg_addr, const uint8_t* data, size_t len);
+    esp_err_t burst_write_cs_control(uint8_t reg_addr, const uint8_t* data, size_t len, CsControl cs_ctrl);
 
     // Initialization helpers
     esp_err_t setup_spi();

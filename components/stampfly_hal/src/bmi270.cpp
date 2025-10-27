@@ -309,6 +309,51 @@ esp_err_t BMI270::read_register(uint8_t reg_addr, uint8_t* data) {
     return ESP_OK;
 }
 
+esp_err_t BMI270::burst_read(uint8_t reg_addr, uint8_t* data, size_t len) {
+    if (!data || !spi_hal_ || !device_handle_ || len == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    // BMI270 4-wire SPI burst read protocol:
+    // TX: [R/W+Addr, Dummy, Dummy, ...]
+    // RX: [Dummy, Dummy, Data0, Data1, Data2, ...]
+    // First 2 bytes of RX are dummy, actual data starts from byte 2
+
+    const size_t total_len = len + 2;  // +2 for dummy bytes
+    uint8_t* tx_buffer = new uint8_t[total_len];
+    uint8_t* rx_buffer = new uint8_t[total_len];
+
+    if (!tx_buffer || !rx_buffer) {
+        delete[] tx_buffer;
+        delete[] rx_buffer;
+        return ESP_ERR_NO_MEM;
+    }
+
+    memset(tx_buffer, 0, total_len);
+    memset(rx_buffer, 0, total_len);
+
+    tx_buffer[0] = reg_addr | SPI_READ_FLAG;
+
+    spi_transaction_t trans = {};
+    trans.length = total_len * 8;  // Convert bytes to bits
+    trans.tx_buffer = tx_buffer;
+    trans.rx_buffer = rx_buffer;
+
+    esp_err_t ret = spi_hal_->transmit(device_handle_, &trans);
+
+    if (ret == ESP_OK) {
+        // Copy actual data (skip first 2 dummy bytes)
+        memcpy(data, &rx_buffer[2], len);
+        ESP_LOGD(TAG, "Burst read from 0x%02X: %d bytes", reg_addr, len);
+    } else {
+        ESP_LOGE(TAG, "Burst read failed for register 0x%02X: %s", reg_addr, esp_err_to_name(ret));
+    }
+
+    delete[] tx_buffer;
+    delete[] rx_buffer;
+    return ret;
+}
+
 esp_err_t BMI270::read_chip_id(uint8_t* chip_id) {
     if (!chip_id) {
         return ESP_ERR_INVALID_ARG;
@@ -419,6 +464,38 @@ esp_err_t BMI270::burst_write(uint8_t reg_addr, const uint8_t* data, size_t len)
     return ret;
 }
 
+esp_err_t BMI270::burst_write_cs_control(uint8_t reg_addr, const uint8_t* data, size_t len, CsControl cs_ctrl) {
+    if (!spi_hal_ || !device_handle_ || !data) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    size_t total_len = len + 1;
+    uint8_t* tx_buffer = new uint8_t[total_len];
+    tx_buffer[0] = reg_addr;
+    memcpy(&tx_buffer[1], data, len);
+
+    spi_transaction_t trans = {};
+    trans.length = total_len * 8;
+    trans.tx_buffer = tx_buffer;
+
+    // Set CS control flag based on parameter
+    if (cs_ctrl == CsControl::KEEP_ACTIVE) {
+        trans.flags = SPI_TRANS_CS_KEEP_ACTIVE;  // Keep CS LOW after transaction
+        ESP_LOGD(TAG, "SPI burst write with CS KEEP_ACTIVE for register 0x%02X (%zu bytes)", reg_addr, len);
+    } else {
+        trans.flags = 0;  // Normal CS control (HIGH after transaction)
+        ESP_LOGD(TAG, "SPI burst write with normal CS control for register 0x%02X (%zu bytes)", reg_addr, len);
+    }
+
+    esp_err_t ret = spi_hal_->transmit(device_handle_, &trans);
+    delete[] tx_buffer;
+
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "SPI burst write (CS control) failed for register 0x%02X: %s", reg_addr, esp_err_to_name(ret));
+    }
+    return ret;
+}
+
 esp_err_t BMI270::switch_to_spi_mode() {
     ESP_LOGI(TAG, "Switching BMI270 from I2C to SPI mode");
 
@@ -482,25 +559,31 @@ esp_err_t BMI270::upload_config_file() {
     }
 
     ESP_LOGI(TAG, "Uploading config file (%zu bytes, 256-byte chunks)", config_size);
+    ESP_LOGI(TAG, "Strategy: Each register write is independent transaction (CS HIGH/LOW per write)");
 
     for (size_t offset = 0; offset < config_size; offset += chunk_size) {
         size_t bytes_to_write = (offset + chunk_size > config_size) ? (config_size - offset) : chunk_size;
 
-        // 1. Set INIT_ADDR BEFORE writing chunk (BMI270 specification)
-        uint16_t word_addr = offset / 2;  // Word addressing (bytes / 2)
+        // 1. Prepare INIT_ADDR (Bosch official implementation)
+        // index / 2 for word addressing
+        // INIT_ADDR_0 uses only lower 4 bits (0x0F mask)
+        // INIT_ADDR_1 uses bits 4-11
+        uint16_t index = offset;
         uint8_t addr_buf[2] = {
-            static_cast<uint8_t>(word_addr & 0xFF),         // LSB
-            static_cast<uint8_t>((word_addr >> 8) & 0xFF)   // MSB
+            static_cast<uint8_t>((index / 2) & 0x0F),   // INIT_ADDR_0: bits 0-3 only
+            static_cast<uint8_t>((index / 2) >> 4)       // INIT_ADDR_1: bits 4-11
         };
 
-        // Write INIT_ADDR as 2-byte burst (starting at REG_INIT_ADDR_0)
+        // 2. Write INIT_ADDR as independent transaction
+        // Transaction 1: CS LOW → [0x5B, LSB, MSB] → CS HIGH
         esp_err_t ret = burst_write(REG_INIT_ADDR_0, addr_buf, 2);
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "❌ Failed to set INIT_ADDR at offset %zu: %s", offset, esp_err_to_name(ret));
             return ret;
         }
 
-        // 2. Write chunk data to INIT_DATA register (AFTER setting INIT_ADDR)
+        // 3. Write INIT_DATA as independent transaction
+        // Transaction 2: CS LOW → [0x5E, ...256bytes...] → CS HIGH
         ret = burst_write(REG_INIT_DATA, &config_data[offset], bytes_to_write);
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "❌ Failed to write config chunk at offset %zu: %s", offset, esp_err_to_name(ret));
@@ -637,24 +720,80 @@ esp_err_t BMI270::configure_sensors() {
 }
 
 esp_err_t BMI270::read_accel(AccelData& data) {
-    // TODO: Implement accelerometer data reading
-    data.x = 0.0f;
-    data.y = 0.0f;
-    data.z = 0.0f;
+    if (!is_initialized()) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    // Read 6 bytes: X_LSB, X_MSB, Y_LSB, Y_MSB, Z_LSB, Z_MSB
+    uint8_t raw_data[6];
+    esp_err_t ret = burst_read(REG_ACC_X_LSB, raw_data, 6);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read accelerometer data: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    // Convert raw 16-bit values to signed integers (LSB first, little-endian)
+    int16_t raw_x = (int16_t)((raw_data[1] << 8) | raw_data[0]);
+    int16_t raw_y = (int16_t)((raw_data[3] << 8) | raw_data[2]);
+    int16_t raw_z = (int16_t)((raw_data[5] << 8) | raw_data[4]);
+
+    // Apply scale factor to convert to m/s²
+    data.x = raw_x * accel_scale_;
+    data.y = raw_y * accel_scale_;
+    data.z = raw_z * accel_scale_;
+
+    ESP_LOGD(TAG, "Accel: X=%.3f, Y=%.3f, Z=%.3f m/s²", data.x, data.y, data.z);
     return ESP_OK;
 }
 
 esp_err_t BMI270::read_gyro(GyroData& data) {
-    // TODO: Implement gyroscope data reading
-    data.x = 0.0f;
-    data.y = 0.0f;
-    data.z = 0.0f;
+    if (!is_initialized()) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    // Read 6 bytes: X_LSB, X_MSB, Y_LSB, Y_MSB, Z_LSB, Z_MSB
+    uint8_t raw_data[6];
+    esp_err_t ret = burst_read(REG_GYR_X_LSB, raw_data, 6);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read gyroscope data: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    // Convert raw 16-bit values to signed integers (LSB first, little-endian)
+    int16_t raw_x = (int16_t)((raw_data[1] << 8) | raw_data[0]);
+    int16_t raw_y = (int16_t)((raw_data[3] << 8) | raw_data[2]);
+    int16_t raw_z = (int16_t)((raw_data[5] << 8) | raw_data[4]);
+
+    // Apply scale factor to convert to rad/s
+    data.x = raw_x * gyro_scale_;
+    data.y = raw_y * gyro_scale_;
+    data.z = raw_z * gyro_scale_;
+
+    ESP_LOGD(TAG, "Gyro: X=%.3f, Y=%.3f, Z=%.3f rad/s", data.x, data.y, data.z);
     return ESP_OK;
 }
 
 esp_err_t BMI270::read_temperature(float& temp_c) {
-    // TODO: Implement temperature reading
-    temp_c = 25.0f;
+    if (!is_initialized()) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    // Read 2 bytes: TEMP_LSB, TEMP_MSB
+    uint8_t raw_data[2];
+    esp_err_t ret = burst_read(REG_TEMPERATURE_LSB, raw_data, 2);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read temperature data: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    // Convert raw 16-bit value to signed integer (LSB first, little-endian)
+    int16_t raw_temp = (int16_t)((raw_data[1] << 8) | raw_data[0]);
+
+    // BMI270 temperature conversion: temp_c = raw_temp / 512.0 + 23.0
+    // (According to BMI270 datasheet section 5.3.7)
+    temp_c = (raw_temp / 512.0f) + 23.0f;
+
+    ESP_LOGD(TAG, "Temperature: %.2f °C (raw: %d)", temp_c, raw_temp);
     return ESP_OK;
 }
 
