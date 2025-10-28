@@ -814,4 +814,68 @@ esp_err_t BMI270::soft_reset() {
     return ESP_OK;
 }
 
+// === Interrupt Configuration Functions ===
+
+esp_err_t BMI270::configure_data_ready_interrupt() {
+    ESP_LOGI(TAG, "Configuring Data Ready interrupt on INT1");
+
+    // Step 1: Configure INT1 pin behavior
+    // INT1_OUTPUT_EN (bit 3) = 1: Enable INT1 output
+    // INT1_ACTIVE_HIGH (bit 1) = 1: Active high
+    // INT1_PUSH_PULL (bit 0) = 0: Push-pull output
+    uint8_t int1_io_ctrl = INT1_OUTPUT_EN | INT1_ACTIVE_HIGH | INT1_PUSH_PULL;
+    esp_err_t ret = write_register(REG_INT1_IO_CTRL, int1_io_ctrl);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to configure INT1 IO control");
+        return ret;
+    }
+    ESP_LOGI(TAG, "✅ INT1 configured: Output enabled, Active high, Push-pull");
+
+    // Step 2: Map Data Ready interrupt to INT1 pin
+    // INT_DRDY_EN (bit 2) = 1: Map data ready to INT1
+    uint8_t int_map_data = INT_DRDY_EN;
+    ret = write_register(REG_INT_MAP_DATA, int_map_data);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to map data ready interrupt to INT1");
+        return ret;
+    }
+    ESP_LOGI(TAG, "✅ Data Ready interrupt mapped to INT1");
+
+    // Verify configuration
+    uint8_t verify_io_ctrl, verify_map_data;
+    read_register(REG_INT1_IO_CTRL, &verify_io_ctrl);
+    read_register(REG_INT_MAP_DATA, &verify_map_data);
+    ESP_LOGI(TAG, "Verification: INT1_IO_CTRL=0x%02X, INT_MAP_DATA=0x%02X",
+             verify_io_ctrl, verify_map_data);
+
+    ESP_LOGI(TAG, "✅ Data Ready interrupt configuration complete");
+    return ESP_OK;
+}
+
+esp_err_t BMI270::enable_data_ready_interrupt() {
+    ESP_LOGI(TAG, "Enabling Data Ready interrupt");
+    return configure_data_ready_interrupt();
+}
+
+esp_err_t BMI270::disable_data_ready_interrupt() {
+    ESP_LOGI(TAG, "Disabling Data Ready interrupt");
+
+    // Clear INT1_IO_CTRL to disable interrupt output
+    esp_err_t ret = write_register(REG_INT1_IO_CTRL, 0x00);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to disable INT1 output");
+        return ret;
+    }
+
+    // Clear INT_MAP_DATA to unmap data ready interrupt
+    ret = write_register(REG_INT_MAP_DATA, 0x00);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to unmap data ready interrupt");
+        return ret;
+    }
+
+    ESP_LOGI(TAG, "✅ Data Ready interrupt disabled");
+    return ESP_OK;
+}
+
 } // namespace stampfly_hal

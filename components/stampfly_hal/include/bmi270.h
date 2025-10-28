@@ -31,6 +31,8 @@ public:
     static constexpr uint8_t REG_ACC_RANGE = 0x41;
     static constexpr uint8_t REG_GYR_CONF = 0x42;
     static constexpr uint8_t REG_GYR_RANGE = 0x43;
+    static constexpr uint8_t REG_INT1_IO_CTRL = 0x53;
+    static constexpr uint8_t REG_INT_MAP_DATA = 0x58;
     static constexpr uint8_t REG_INIT_CTRL = 0x59;
     static constexpr uint8_t REG_INIT_ADDR_0 = 0x5B;
     static constexpr uint8_t REG_INIT_ADDR_1 = 0x5C;
@@ -53,6 +55,15 @@ public:
     // Status bits
     static constexpr uint8_t STATUS_DRDY_ACC = 0x80;
     static constexpr uint8_t STATUS_DRDY_GYR = 0x40;
+
+    // Interrupt configuration bits
+    static constexpr uint8_t INT1_OUTPUT_EN = 0x08;    // Enable INT1 output
+    static constexpr uint8_t INT1_ACTIVE_HIGH = 0x02;  // INT1 active high (vs active low)
+    static constexpr uint8_t INT1_PUSH_PULL = 0x00;    // INT1 push-pull (vs open-drain)
+    static constexpr uint8_t INT_DRDY_EN = 0x04;       // Data ready interrupt enable
+
+    // Hardware pin definitions (StampFly specific)
+    static constexpr int GPIO_INT1_PIN = 11;  // INT1 connected to GPIO11
 
     BMI270();
     ~BMI270() = default;
@@ -92,6 +103,14 @@ public:
     esp_err_t read_temperature(float& temp_c);
     esp_err_t get_status(uint8_t& status);
     esp_err_t get_error_status(uint8_t& error);
+
+    // Interrupt configuration
+    esp_err_t configure_data_ready_interrupt();
+    esp_err_t enable_data_ready_interrupt();
+    esp_err_t disable_data_ready_interrupt();
+
+    // Get INT1 pin for external GPIO interrupt setup
+    static constexpr int get_int1_pin() { return GPIO_INT1_PIN; }
 
 private:
     SpiHal* spi_hal_;
