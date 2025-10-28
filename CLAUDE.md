@@ -647,6 +647,88 @@ stampfly_hal/
 - ✅ **学習効果**: 統一されたパターンでの理解促進
 - ✅ **ESP-IDF準拠**: 標準的なコンポーネント設計に準拠
 
+## BMI270 FIFO実装詳細（Phase 1完了）
+
+### **Phase 1: FIFO基本機能（2025-10-28実装完了）**
+
+#### 実装機能
+1. **FIFO基本操作**
+   - `enable_fifo(bool accel, bool gyro)` - FIFO有効化
+   - `disable_fifo()` - FIFO無効化
+   - `flush_fifo()` - FIFOバッファクリア
+
+2. **FIFO設定**
+   - `set_fifo_watermark(uint16_t bytes)` - ウォーターマーク設定（最大6144バイト）
+   - `set_fifo_mode(FifoMode mode)` - FIFO/Streamモード切り替え
+
+3. **FIFOデータ読み取り**
+   - `read_fifo_length(uint16_t* length)` - 現在のFIFOデータ長取得
+   - `read_fifo_data(uint8_t* buffer, uint16_t length)` - バースト読み取り
+
+4. **FIFOデータ解析**
+   - `parse_fifo_data(...)` - ヘッダーレスモードデータ解析
+   - `FifoSample`構造体 - 生データ + 物理量（m/s², rad/s）
+
+5. **FIFO診断**
+   - `get_fifo_status(FifoStatus* status)` - ステータス取得
+   - `print_fifo_diagnostics()` - 診断情報表示
+
+#### 技術仕様
+- **FIFOサイズ**: 6144バイト（6KB）
+- **フレームサイズ**: 12バイト/サンプル（ヘッダーレス）
+  - 加速度: 6バイト（X, Y, Z各2バイト）
+  - ジャイロ: 6バイト（X, Y, Z各2バイト）
+- **最大サンプル数**: 512サンプル（6144 / 12）
+- **データレート**: 1600Hz（ODR設定）
+- **物理量変換**: SI単位系（m/s², rad/s）
+
+#### データ構造
+```cpp
+// FIFOモード
+enum class FifoMode { FIFO, STREAM };
+
+// FIFOサンプル
+struct FifoSample {
+    int16_t accel_x_raw, accel_y_raw, accel_z_raw;  // 生データ
+    int16_t gyro_x_raw, gyro_y_raw, gyro_z_raw;
+    float accel_x_mps2, accel_y_mps2, accel_z_mps2; // 物理量
+    float gyro_x_rps, gyro_y_rps, gyro_z_rps;
+    uint32_t sensor_time_ticks;  // Phase 3で使用
+    uint64_t timestamp_us;
+};
+
+// FIFOステータス
+struct FifoStatus {
+    bool enabled, overflow;
+    uint16_t current_length, watermark;
+    uint32_t read_count, overflow_count;
+    uint16_t max_samples;
+    float average_samples;
+};
+```
+
+#### 実装済み機能まとめ
+- ✅ FIFOバッファ有効化・設定
+- ✅ ヘッダーレスモードデータ取得
+- ✅ バースト読み取り（最大6144バイト）
+- ✅ データ解析・物理量変換
+- ✅ オーバーフロー検出
+- ✅ 診断機能・統計情報
+- ✅ 完全なエラーハンドリング
+
+#### Phase 1の制限事項
+- ⏳ ポーリングベース（Phase 2で割り込み実装予定）
+- ⏳ タイムスタンプ未使用（Phase 3でセンサータイム統合予定）
+- ⏳ ダウンサンプリング未実装（Phase 4で実装予定）
+- ⏳ ヘッダーレスのみ対応（ヘッダーモードは将来拡張）
+
+#### 次のステップ
+- **Phase 2**: ウォーターマーク割り込み実装（2-3日）
+- **Phase 3**: センサータイム統合（2日）
+- **Phase 4**: ダウンサンプリング機能（1-2日）
+- **Phase 5**: エラーハンドリング強化（2日）
+- **Phase 6**: 最適化・ドキュメント（2-3日）
+
 ## 今後の開発予定
 
 ### センサーHAL実装ロードマップ
@@ -668,8 +750,15 @@ stampfly_hal/
      - データレート: 500Hz（ポーリング方式、2ms周期）
      - オーバーサンプリング比: 3.2x (1600Hz ODR / 500Hz制御)
      - デュアルタスク構成: IMU(CPU1) + LED(CPU0)
-   - **⏳ 将来実装**: Data Ready割り込み、FIFOバッファ活用
-   - **📝 現在のmainブランチ**: シンプルなベースライン（コミット ff48135）
+   - **✅ Data Ready割り込み実装完了（2025-10-28）**
+   - **✅ FIFO Phase 1実装完了（2025-10-28）**: 基本機能実装
+     - FIFOバッファ有効化・無効化
+     - ヘッダーレスモード（12バイト/サンプル）
+     - バースト読み取り（最大6144バイト）
+     - データ解析・物理量変換
+     - 診断機能・統計情報
+     - 完全なエラーハンドリング
+   - **📝 現在のmainブランチ**: Data Ready割り込み + FIFO Phase 1
 2. BMP280 (気圧センサー) - 高度制御（次期実装予定）
 3. VL53L3CX (ToF距離センサー) - 障害物回避
 4. BMM150 (3軸磁気センサー) - ヘディング制御
