@@ -974,8 +974,15 @@ esp_err_t BMI270::configure_fifo_registers() {
         return ret;
     }
 
-    // 2. ダウンサンプリング設定（Phase 1では無効: 0x00）
-    ret = write_register(REG_FIFO_DOWNS, 0x00);
+    // 2. FIFO_DOWNS設定（0x88 = フィルター済みデータ使用、ダウンサンプリング無効）
+    // Bit 7 (acc_fifo_filt_data) = 1: 加速度計はフィルター済みデータ（ODR: 1600Hz）
+    // Bit 6-4 (acc_fifo_downs) = 0: 加速度計ダウンサンプリング無効
+    // Bit 3 (gyr_fifo_filt_data) = 1: ジャイロはフィルター済みデータ（ODR: 1600Hz）
+    // Bit 2-0 (gyr_fifo_downs) = 0: ジャイロダウンサンプリング無効
+    //
+    // 【重要】bit 7/3を0にすると固定レート（ACC: 1600Hz, GYR: 6400Hz）になり、
+    // ODR設定とのミスマッチでダミーフレームが発生する
+    ret = write_register(REG_FIFO_DOWNS, 0x88);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to write FIFO_DOWNS");
         return ret;
@@ -1225,42 +1232,88 @@ esp_err_t BMI270::parse_fifo_data(
              buffer_length, samples_to_parse, max_samples);
 
     // ヘッダーレスモード解析
-    // フレーム構造（12バイト）:
-    //   Byte 0-1:   accel_x (LSB, MSB)
-    //   Byte 2-3:   accel_y
-    //   Byte 4-5:   accel_z
-    //   Byte 6-7:   gyro_x
-    //   Byte 8-9:   gyro_y
-    //   Byte 10-11: gyro_z
+    // フレーム構造（12バイト）- BMI270実際の順序:
+    //   Byte 0-1:   gyro_x (LSB, MSB)
+    //   Byte 2-3:   gyro_y
+    //   Byte 4-5:   gyro_z
+    //   Byte 6-7:   accel_x
+    //   Byte 8-9:   accel_y
+    //   Byte 10-11: accel_z
+
+    // 有効サンプル数カウンター（ダミーフレームをスキップ）
+    uint16_t valid_samples = 0;
 
     for (uint16_t i = 0; i < samples_to_parse; i++) {
         const uint8_t* frame = &buffer[i * FIFO_FRAME_SIZE_HEADERLESS];
 
-        // 生データ抽出（リトルエンディアン、2の補数）
-        samples[i].accel_x_raw = (int16_t)((frame[1] << 8) | frame[0]);
-        samples[i].accel_y_raw = (int16_t)((frame[3] << 8) | frame[2]);
-        samples[i].accel_z_raw = (int16_t)((frame[5] << 8) | frame[4]);
-        samples[i].gyro_x_raw = (int16_t)((frame[7] << 8) | frame[6]);
-        samples[i].gyro_y_raw = (int16_t)((frame[9] << 8) | frame[8]);
-        samples[i].gyro_z_raw = (int16_t)((frame[11] << 8) | frame[10]);
+        // 一時変数で生データ抽出（リトルエンディアン、2の補数）
+        // BMI270の実際の順序: ジャイロが先、加速度が後
+        int16_t gyro_x_raw = (int16_t)((frame[1] << 8) | frame[0]);
+        int16_t gyro_y_raw = (int16_t)((frame[3] << 8) | frame[2]);
+        int16_t gyro_z_raw = (int16_t)((frame[5] << 8) | frame[4]);
+        int16_t accel_x_raw = (int16_t)((frame[7] << 8) | frame[6]);
+        int16_t accel_y_raw = (int16_t)((frame[9] << 8) | frame[8]);
+        int16_t accel_z_raw = (int16_t)((frame[11] << 8) | frame[10]);
+
+        // Debug: 最初の3サンプルの生データをログ出力
+        if (i < 3) {
+            ESP_LOGD(TAG, "Sample %u raw: gyro=(%d,%d,%d) accel=(%d,%d,%d)",
+                     i, gyro_x_raw, gyro_y_raw, gyro_z_raw, accel_x_raw, accel_y_raw, accel_z_raw);
+        }
+
+        // ダミーフレーム検出（BMI270特有の無効データマーカー）
+        // accel_x_raw == 32513 (0x7F01) && accel_y_raw == -32768 (0x8000) の場合はスキップ
+        bool is_dummy_frame = (accel_x_raw == 32513 &&
+                                accel_y_raw == -32768 &&
+                                accel_z_raw == -32768);
+
+        if (is_dummy_frame) {
+            ESP_LOGD(TAG, "Sample %u: Dummy frame detected, skipping", i);
+            continue;  // このサンプルをスキップ
+        }
+
+        // 有効サンプルに保存
+        samples[valid_samples].gyro_x_raw = gyro_x_raw;
+        samples[valid_samples].gyro_y_raw = gyro_y_raw;
+        samples[valid_samples].gyro_z_raw = gyro_z_raw;
+        samples[valid_samples].accel_x_raw = accel_x_raw;
+        samples[valid_samples].accel_y_raw = accel_y_raw;
+        samples[valid_samples].accel_z_raw = accel_z_raw;
 
         // 物理量変換
-        convert_raw_to_physical(samples[i]);
+        convert_raw_to_physical(samples[valid_samples]);
+
+        // Debug: 最初の3有効サンプルの物理量をログ出力
+        if (valid_samples < 3) {
+            ESP_LOGD(TAG, "Valid sample %u physical: gyro=(%.3f,%.3f,%.3f) rad/s, accel=(%.3f,%.3f,%.3f) m/s²",
+                     valid_samples,
+                     samples[valid_samples].gyro_x_rps, samples[valid_samples].gyro_y_rps, samples[valid_samples].gyro_z_rps,
+                     samples[valid_samples].accel_x_mps2, samples[valid_samples].accel_y_mps2, samples[valid_samples].accel_z_mps2);
+        }
 
         // タイムスタンプ（Phase 3で実装、今回は0）
-        samples[i].sensor_time_ticks = 0;
-        samples[i].timestamp_us = 0;
+        samples[valid_samples].sensor_time_ticks = 0;
+        samples[valid_samples].timestamp_us = 0;
+
+        valid_samples++;
     }
 
-    *parsed_count = samples_to_parse;
+    *parsed_count = valid_samples;
 
-    // 統計更新
-    fifo_total_samples_ += samples_to_parse;
-    if (samples_to_parse > fifo_max_samples_) {
-        fifo_max_samples_ = samples_to_parse;
+    // 統計更新（有効サンプル数を使用）
+    fifo_total_samples_ += valid_samples;
+    if (valid_samples > fifo_max_samples_) {
+        fifo_max_samples_ = valid_samples;
     }
 
-    ESP_LOGD(TAG, "Parsed %u samples successfully", samples_to_parse);
+    // ダミーフレームがあった場合の警告
+    uint16_t dummy_frames = samples_to_parse - valid_samples;
+    if (dummy_frames > 0) {
+        ESP_LOGD(TAG, "Parsed %u valid samples (skipped %u dummy frames)",
+                 valid_samples, dummy_frames);
+    } else {
+        ESP_LOGD(TAG, "Parsed %u samples successfully", valid_samples);
+    }
 
     return ESP_OK;
 }
@@ -1325,6 +1378,123 @@ void BMI270::print_fifo_diagnostics() const {
     }
 
     ESP_LOGI(TAG, "====================================");
+}
+
+// センサー設定診断（ODR, PWR_CTRL, FIFO設定確認）
+void BMI270::print_sensor_config_diagnostics() {
+    ESP_LOGI(TAG, "========== Sensor Configuration Diagnostics ==========");
+
+    uint8_t reg_value;
+    esp_err_t ret;
+
+    // PWR_CTRL (0x7D) - センサー有効化状態
+    ret = read_register(REG_PWR_CTRL, &reg_value);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "PWR_CTRL (0x7D) = 0x%02X", reg_value);
+        ESP_LOGI(TAG, "  ACC_EN: %s", (reg_value & PWR_CTRL_ACC_EN) ? "YES" : "NO");
+        ESP_LOGI(TAG, "  GYR_EN: %s", (reg_value & PWR_CTRL_GYR_EN) ? "YES" : "NO");
+        ESP_LOGI(TAG, "  TEMP_EN: %s", (reg_value & PWR_CTRL_TEMP_EN) ? "YES" : "NO");
+    }
+
+    // PWR_CONF (0x7C) - Advanced Power Save
+    ret = read_register(REG_PWR_CONF, &reg_value);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "PWR_CONF (0x7C) = 0x%02X", reg_value);
+        ESP_LOGI(TAG, "  Advanced Power Save: %s", (reg_value == 0x00) ? "Disabled" : "Enabled");
+    }
+
+    // ACC_CONF (0x40) - 加速度計ODR設定
+    ret = read_register(REG_ACC_CONF, &reg_value);
+    if (ret == ESP_OK) {
+        uint8_t odr_bits = reg_value & 0x0F;
+        const char* odr_str;
+        switch(odr_bits) {
+            case 0x05: odr_str = "12.5Hz"; break;
+            case 0x06: odr_str = "25Hz"; break;
+            case 0x07: odr_str = "50Hz"; break;
+            case 0x08: odr_str = "100Hz"; break;
+            case 0x09: odr_str = "200Hz"; break;
+            case 0x0A: odr_str = "400Hz"; break;
+            case 0x0B: odr_str = "800Hz"; break;
+            case 0x0C: odr_str = "1600Hz"; break;
+            default: odr_str = "Unknown"; break;
+        }
+        ESP_LOGI(TAG, "ACC_CONF (0x40) = 0x%02X (ODR: %s, Perf: %s)",
+                 reg_value, odr_str,
+                 (reg_value & 0x80) ? "Performance" : "Power Save");
+    }
+
+    // GYR_CONF (0x42) - ジャイロODR設定
+    ret = read_register(REG_GYR_CONF, &reg_value);
+    if (ret == ESP_OK) {
+        uint8_t odr_bits = reg_value & 0x0F;
+        const char* odr_str;
+        switch(odr_bits) {
+            case 0x06: odr_str = "25Hz"; break;
+            case 0x07: odr_str = "50Hz"; break;
+            case 0x08: odr_str = "100Hz"; break;
+            case 0x09: odr_str = "200Hz"; break;
+            case 0x0A: odr_str = "400Hz"; break;
+            case 0x0B: odr_str = "800Hz"; break;
+            case 0x0C: odr_str = "1600Hz"; break;
+            case 0x0D: odr_str = "3200Hz"; break;
+            default: odr_str = "Unknown"; break;
+        }
+        ESP_LOGI(TAG, "GYR_CONF (0x42) = 0x%02X (ODR: %s, Perf: %s)",
+                 reg_value, odr_str,
+                 (reg_value & 0x80) ? "Performance" : "Power Save");
+    }
+
+    // FIFO_DOWNS (0x45) - FIFOフィルター＆ダウンサンプリング設定
+    ret = read_register(REG_FIFO_DOWNS, &reg_value);
+    if (ret == ESP_OK) {
+        bool acc_fifo_filt_data = (reg_value & 0x80) != 0;  // Bit 7
+        uint8_t acc_fifo_downs = (reg_value >> 4) & 0x07;   // Bits 6-4
+        bool gyr_fifo_filt_data = (reg_value & 0x08) != 0;  // Bit 3
+        uint8_t gyr_fifo_downs = reg_value & 0x07;          // Bits 2-0
+
+        ESP_LOGI(TAG, "FIFO_DOWNS (0x45) = 0x%02X", reg_value);
+        ESP_LOGI(TAG, "  ACC_FIFO_FILT_DATA (bit 7): %u (%s, rate: %s)",
+                 acc_fifo_filt_data,
+                 acc_fifo_filt_data ? "Filtered" : "Unfiltered",
+                 acc_fifo_filt_data ? "ODR-based" : "Fixed 1600Hz");
+        ESP_LOGI(TAG, "  ACC_FIFO_DOWNS (bits 6-4): %u (factor: %u)", acc_fifo_downs, 1 << acc_fifo_downs);
+        ESP_LOGI(TAG, "  GYR_FIFO_FILT_DATA (bit 3): %u (%s, rate: %s)",
+                 gyr_fifo_filt_data,
+                 gyr_fifo_filt_data ? "Filtered" : "Unfiltered",
+                 gyr_fifo_filt_data ? "ODR-based" : "Fixed 6400Hz");
+        ESP_LOGI(TAG, "  GYR_FIFO_DOWNS (bits 2-0): %u (factor: %u)", gyr_fifo_downs, 1 << gyr_fifo_downs);
+    }
+
+    // FIFO_CONFIG_0 (0x48) - FIFOモード
+    ret = read_register(REG_FIFO_CONFIG_0, &reg_value);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "FIFO_CONFIG_0 (0x48) = 0x%02X", reg_value);
+        ESP_LOGI(TAG, "  FIFO Mode: %s", (reg_value & 0x01) ? "FIFO" : "STREAM");
+        ESP_LOGI(TAG, "  Stop on full: %s", (reg_value & 0x02) ? "YES" : "NO");
+    }
+
+    // FIFO_CONFIG_1 (0x49) - FIFO有効化
+    ret = read_register(REG_FIFO_CONFIG_1, &reg_value);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "FIFO_CONFIG_1 (0x49) = 0x%02X", reg_value);
+        ESP_LOGI(TAG, "  FIFO_ACC_EN: %s", (reg_value & FIFO_ACC_EN) ? "YES" : "NO");
+        ESP_LOGI(TAG, "  FIFO_GYR_EN: %s", (reg_value & FIFO_GYR_EN) ? "YES" : "NO");
+        ESP_LOGI(TAG, "  FIFO_HEADER_EN: %s", (reg_value & FIFO_HEADER_EN) ? "YES" : "NO");
+    }
+
+    // FIFO_WTM (0x46, 0x47) - ウォーターマーク
+    uint8_t wtm_low, wtm_high;
+    ret = read_register(REG_FIFO_WTM_0, &wtm_low);
+    if (ret == ESP_OK) {
+        ret = read_register(REG_FIFO_WTM_1, &wtm_high);
+        if (ret == ESP_OK) {
+            uint16_t watermark = wtm_low | ((wtm_high & 0x07) << 8);
+            ESP_LOGI(TAG, "FIFO_WTM = %u bytes (%u frames)", watermark, watermark / 12);
+        }
+    }
+
+    ESP_LOGI(TAG, "====================================================");
 }
 
 } // namespace stampfly_hal

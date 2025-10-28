@@ -23,12 +23,12 @@ static const char* TAG = "STAMPFLY_MAIN";
 // === Configuration Flags ===
 // Streaming mode selection
 enum class StreamingMode {
-    POLLING,    // Mode 0: 100Hz direct polling
-    INTERRUPT,  // Mode 1: 1600Hz interrupt + decimation → 100Hz
-    FIFO        // Mode 2: 1600Hz FIFO batch → averaging → 100Hz
+    MODE_POLLING,    // Mode 0: 100Hz direct polling
+    MODE_INTERRUPT,  // Mode 1: 1600Hz interrupt + decimation → 100Hz
+    MODE_FIFO        // Mode 2: 1600Hz FIFO batch → decimation → configurable Hz
 };
 
-static StreamingMode streaming_mode = StreamingMode::FIFO;  // SWITCH HERE
+static StreamingMode streaming_mode = StreamingMode::MODE_FIFO;  // SWITCH HERE
 
 // Debug mode control
 static bool debug_mode = false;  // Set to true for detailed logging
@@ -39,8 +39,13 @@ static bool debug_mode = false;  // Set to true for detailed logging
 static const uint32_t interrupt_decimation = 16;  // Default: ~100Hz output
 
 // FIFO mode configuration
-static const uint16_t fifo_watermark = 1920;      // 160 samples @ 1600Hz = 100ms batch
-static const uint32_t fifo_batch_interval_ms = 100;  // 100ms = 10Hz batch read, output 100Hz averaged
+// Strategy: Batch interval matches output rate to avoid multiple samples at same timestamp
+// Example: 100Hz output → 10ms interval → 16 samples/batch → 1 sample output/batch
+static const uint32_t fifo_output_rate_hz = 100;  // Output rate (100Hz, 200Hz, 400Hz, 800Hz, 1600Hz)
+
+// Auto-calculated based on output rate
+static const uint32_t fifo_batch_interval_ms = 1000 / fifo_output_rate_hz;  // 10ms for 100Hz
+static const uint16_t fifo_watermark = (1600 / fifo_output_rate_hz) * 12;   // 192 bytes (16 samples) for 100Hz
 
 // Global instances
 static stampfly_hal::BMI270* g_bmi270 = nullptr;
@@ -198,12 +203,29 @@ void task_imu_streaming_fifo(void* pvParameters) {
         return;
     }
 
+    // Calculate decimation factor
+    const uint32_t sampling_rate = 1600;  // BMI270 ODR
+    const uint32_t decimation_factor = sampling_rate / fifo_output_rate_hz;
+
     ESP_LOGI(TAG, "📊 IMU streaming task started (FIFO mode)");
-    ESP_LOGI(TAG, "📊 Internal sampling: 1600Hz, Batch: %ums (%u samples), Output: ~%uHz (averaged)",
-             fifo_batch_interval_ms, fifo_watermark / 12, 1000 / fifo_batch_interval_ms);
+    ESP_LOGI(TAG, "📊 Internal sampling: 1600Hz, Batch: %ums (%u samples), Output: %uHz (decimation: 1/%u)",
+             (unsigned int)fifo_batch_interval_ms, (unsigned int)(fifo_watermark / 12),
+             (unsigned int)fifo_output_rate_hz, (unsigned int)decimation_factor);
+
+    // 【重要】設定ファイルによるODR上書きを防ぐため、FIFO有効化直前にODR再設定
+    ESP_LOGI(TAG, "🔧 Re-configuring sensors before FIFO enable (ensure 1600Hz ODR)");
+    esp_err_t ret = g_bmi270->configure_sensors();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "❌ Failed to re-configure sensors");
+        free(fifo_buffer);
+        free(samples);
+        vTaskDelete(NULL);
+        return;
+    }
+    ESP_LOGI(TAG, "✅ Sensors re-configured (1600Hz ODR confirmed)");
 
     // Enable FIFO
-    esp_err_t ret = g_bmi270->enable_fifo(true, true);
+    ret = g_bmi270->enable_fifo(true, true);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "❌ Failed to enable FIFO");
         free(fifo_buffer);
@@ -222,6 +244,9 @@ void task_imu_streaming_fifo(void* pvParameters) {
     }
 
     ESP_LOGI(TAG, "✅ FIFO enabled (watermark: %u bytes)", fifo_watermark);
+
+    // 【診断】FIFO設定とセンサー設定を確認
+    g_bmi270->print_sensor_config_diagnostics();
 
     while (1) {
         // Read FIFO length
@@ -281,42 +306,28 @@ void task_imu_streaming_fifo(void* pvParameters) {
             continue;
         }
 
-        // Calculate average of all samples in the batch
-        double accel_x_sum = 0, accel_y_sum = 0, accel_z_sum = 0;
-        double gyro_x_sum = 0, gyro_y_sum = 0, gyro_z_sum = 0;
+        // Output decimated samples (e.g., every 16th sample for 100Hz output)
+        // This preserves real-time characteristics while reducing serial traffic
+        for (uint16_t i = 0; i < parsed_count; i += decimation_factor) {
+            // Teleplot format output (raw decimated samples)
+            printf(">accel_x:%.3f\n", samples[i].accel_x_mps2);
+            printf(">accel_y:%.3f\n", samples[i].accel_y_mps2);
+            printf(">accel_z:%.3f\n", samples[i].accel_z_mps2);
+            printf(">gyro_x:%.3f\n", samples[i].gyro_x_rps);
+            printf(">gyro_y:%.3f\n", samples[i].gyro_y_rps);
+            printf(">gyro_z:%.3f\n", samples[i].gyro_z_rps);
 
-        for (uint16_t i = 0; i < parsed_count; i++) {
-            accel_x_sum += samples[i].accel_x_mps2;
-            accel_y_sum += samples[i].accel_y_mps2;
-            accel_z_sum += samples[i].accel_z_mps2;
-            gyro_x_sum += samples[i].gyro_x_rps;
-            gyro_y_sum += samples[i].gyro_y_rps;
-            gyro_z_sum += samples[i].gyro_z_rps;
+            // Read temperature once per batch (not per sample for efficiency)
+            if (i == 0) {
+                float temperature;
+                ret = g_bmi270->read_temperature(temperature);
+                if (ret == ESP_OK) {
+                    printf(">temperature:%.2f\n", temperature);
+                }
+            }
+
+            fflush(stdout);
         }
-
-        float accel_x_avg = accel_x_sum / parsed_count;
-        float accel_y_avg = accel_y_sum / parsed_count;
-        float accel_z_avg = accel_z_sum / parsed_count;
-        float gyro_x_avg = gyro_x_sum / parsed_count;
-        float gyro_y_avg = gyro_y_sum / parsed_count;
-        float gyro_z_avg = gyro_z_sum / parsed_count;
-
-        // Read temperature (separate register read)
-        float temperature;
-        ret = g_bmi270->read_temperature(temperature);
-        if (ret != ESP_OK) {
-            temperature = 0.0f;
-        }
-
-        // Teleplot format output (averaged values)
-        printf(">accel_x:%.3f\n", accel_x_avg);
-        printf(">accel_y:%.3f\n", accel_y_avg);
-        printf(">accel_z:%.3f\n", accel_z_avg);
-        printf(">gyro_x:%.3f\n", gyro_x_avg);
-        printf(">gyro_y:%.3f\n", gyro_y_avg);
-        printf(">gyro_z:%.3f\n", gyro_z_avg);
-        printf(">temperature:%.2f\n", temperature);
-        fflush(stdout);
 
         batch_count++;
         total_samples += parsed_count;
@@ -387,9 +398,9 @@ extern "C" void app_main(void) {
 
     const char* mode_name;
     switch (streaming_mode) {
-        case StreamingMode::POLLING:   mode_name = "POLLING (100Hz direct)"; break;
-        case StreamingMode::INTERRUPT: mode_name = "INTERRUPT (1600Hz → decimation)"; break;
-        case StreamingMode::FIFO:      mode_name = "FIFO (1600Hz batch → averaging)"; break;
+        case StreamingMode::MODE_POLLING:   mode_name = "POLLING (100Hz direct)"; break;
+        case StreamingMode::MODE_INTERRUPT: mode_name = "INTERRUPT (1600Hz → decimation)"; break;
+        case StreamingMode::MODE_FIFO:      mode_name = "FIFO (1600Hz batch → averaging)"; break;
         default: mode_name = "UNKNOWN"; break;
     }
     ESP_LOGI(TAG, "Mode: %s", mode_name);
@@ -460,7 +471,7 @@ extern "C" void app_main(void) {
     }
 
     // === Phase 4.5: Interrupt Configuration (if interrupt mode) ===
-    if (streaming_mode == StreamingMode::INTERRUPT) {
+    if (streaming_mode == StreamingMode::MODE_INTERRUPT) {
         ESP_LOGI(TAG, "⚡ Phase 4.5: Interrupt mode configuration");
 
         // Create binary semaphore for data ready signal
@@ -514,7 +525,7 @@ extern "C" void app_main(void) {
         ESP_LOGI(TAG, "✅ BMI270 data ready interrupt configured");
     } else {
         ESP_LOGI(TAG, "ℹ️  %s mode - skipping interrupt configuration",
-                 streaming_mode == StreamingMode::POLLING ? "Polling" : "FIFO");
+                 streaming_mode == StreamingMode::MODE_POLLING ? "Polling" : "FIFO");
     }
 
     // === Phase 5: RGB LED Initialization ===
@@ -540,7 +551,7 @@ extern "C" void app_main(void) {
 
     // Create IMU streaming task (mode-dependent, priority 5, CPU1)
     switch (streaming_mode) {
-        case StreamingMode::POLLING:
+        case StreamingMode::MODE_POLLING:
             xTaskCreatePinnedToCore(
                 task_imu_streaming_polling,
                 "IMU_Poll",
@@ -553,7 +564,7 @@ extern "C" void app_main(void) {
             ESP_LOGI(TAG, "✅ IMU streaming task created (POLLING mode, 100Hz, CPU1)");
             break;
 
-        case StreamingMode::INTERRUPT:
+        case StreamingMode::MODE_INTERRUPT:
             xTaskCreatePinnedToCore(
                 task_imu_streaming_interrupt,
                 "IMU_Int",
@@ -568,7 +579,7 @@ extern "C" void app_main(void) {
                      1600 / interrupt_decimation, interrupt_decimation);
             break;
 
-        case StreamingMode::FIFO:
+        case StreamingMode::MODE_FIFO:
             xTaskCreatePinnedToCore(
                 task_imu_streaming_fifo,
                 "IMU_FIFO",
@@ -579,8 +590,9 @@ extern "C" void app_main(void) {
                 1  // CPU1
             );
             ESP_LOGI(TAG, "✅ IMU streaming task created (FIFO mode, CPU1)");
-            ESP_LOGI(TAG, "   Internal: 1600Hz, Batch: %ums (%u samples), Output: ~%uHz (averaged)",
-                     fifo_batch_interval_ms, fifo_watermark / 12, 1000 / fifo_batch_interval_ms);
+            ESP_LOGI(TAG, "   Internal: 1600Hz, Batch: %ums (%u samples), Output: %uHz (decimation: 1/%u)",
+                     (unsigned int)fifo_batch_interval_ms, (unsigned int)(fifo_watermark / 12),
+                     (unsigned int)fifo_output_rate_hz, (unsigned int)(1600 / fifo_output_rate_hz));
             break;
     }
 
@@ -604,17 +616,18 @@ extern "C" void app_main(void) {
     ESP_LOGI(TAG, "📡 Streaming IMU data (Teleplot format)");
 
     switch (streaming_mode) {
-        case StreamingMode::POLLING:
+        case StreamingMode::MODE_POLLING:
             ESP_LOGI(TAG, "📊 Mode: POLLING (100Hz direct read)");
             break;
-        case StreamingMode::INTERRUPT:
+        case StreamingMode::MODE_INTERRUPT:
             ESP_LOGI(TAG, "📊 Mode: INTERRUPT (Sampling: 1600Hz, Output: ~%luHz)",
                      1600 / interrupt_decimation);
             break;
-        case StreamingMode::FIFO:
-            ESP_LOGI(TAG, "📊 Mode: FIFO (Batch: %ums @ 1600Hz → %u samples averaged → 10Hz output)",
-                     fifo_batch_interval_ms, fifo_watermark / 12);
-            ESP_LOGI(TAG, "   Benefits: Low CPU load, noise reduction via averaging, burst read efficiency");
+        case StreamingMode::MODE_FIFO:
+            ESP_LOGI(TAG, "📊 Mode: FIFO (Batch: %ums @ 1600Hz → decimation 1/%u → %uHz output)",
+                     (unsigned int)fifo_batch_interval_ms, (unsigned int)(1600 / fifo_output_rate_hz),
+                     (unsigned int)fifo_output_rate_hz);
+            ESP_LOGI(TAG, "   Benefits: Low CPU load, burst read efficiency, real-time data preserved");
             break;
     }
 

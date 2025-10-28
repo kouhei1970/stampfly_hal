@@ -241,6 +241,7 @@ public:
     // FIFO診断
     esp_err_t get_fifo_status(FifoStatus* status);
     void print_fifo_diagnostics() const;
+    void print_sensor_config_diagnostics();  // センサー設定診断（ODR, FIFO等）
 
 private:
     SpiHal* spi_hal_;
